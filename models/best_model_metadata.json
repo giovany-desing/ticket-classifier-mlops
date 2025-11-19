@@ -1,15 +1,21 @@
 {
   "model_name": "Gradient_Boosting",
-  "f1_score": 0.9794200812946553,
-  "run_id": "ef28d50c66144856aa1977b29802eb84",
-  "timestamp": "20251119_174454",
+  "f1_score": 0.9835383067165773,
+  "run_id": "b7883dbc8bca4a3e894a29d2fade6ce3",
+  "timestamp": "20251119_185624",
+  "environment": "Local",
   "hyperparameters": {
-    "n_estimators": 77,
-    "max_depth": 6,
-    "learning_rate": 0.010157860744102359,
-    "subsample": 0.9107548540934559,
-    "min_samples_split": 7,
-    "min_samples_leaf": 1
+    "n_estimators": 296,
+    "max_depth": 9,
+    "learning_rate": 0.0434826067200854,
+    "subsample": 0.7755566318669559,
+    "min_samples_split": 4,
+    "min_samples_leaf": 2
+  },
+  "training_config": {
+    "n_trials": 20,
+    "cv_folds": 3,
+    "max_features": 5000
   },
   "training_samples": 970,
   "test_samples": 243,
@@ -20,98 +26,98 @@
       "precision": 0.9714870432515195,
       "recall": 0.9711934156378601,
       "params": {
-        "C": 4.6234859191414595,
+        "C": 9.543440190600847,
         "penalty": "l1",
         "solver": "saga",
         "max_iter": 1000,
         "random_state": 42
       },
-      "run_id": "5957a7290392482390685098be6c469c"
+      "run_id": "eb4bf401837f4c658a7b3179c20edbd1"
     },
     "Random_Forest": {
-      "accuracy": 0.9218106995884774,
-      "f1_score": 0.9215969871147045,
-      "precision": 0.926790173703754,
-      "recall": 0.9218106995884774,
+      "accuracy": 0.9135802469135802,
+      "f1_score": 0.9131701735200642,
+      "precision": 0.9179522816945784,
+      "recall": 0.9135802469135802,
       "params": {
-        "n_estimators": 121,
-        "max_depth": 19,
-        "min_samples_split": 8,
-        "min_samples_leaf": 1,
+        "n_estimators": 112,
+        "max_depth": 27,
+        "min_samples_split": 15,
+        "min_samples_leaf": 2,
         "max_features": "sqrt"
       },
-      "run_id": "69f3d0efbfe14144a952e48e94ee7263"
+      "run_id": "ee276ad3479a47e7b417404ed5d577a3"
     },
     "XGBoost": {
-      "accuracy": 0.9711934156378601,
-      "f1_score": 0.9710261767348908,
-      "precision": 0.9722293052279666,
-      "recall": 0.9711934156378601,
+      "accuracy": 0.9629629629629629,
+      "f1_score": 0.9626675108156589,
+      "precision": 0.9648563128955286,
+      "recall": 0.9629629629629629,
       "params": {
-        "n_estimators": 241,
-        "max_depth": 8,
-        "learning_rate": 0.010316042868580828,
-        "subsample": 0.8279920441968781,
-        "colsample_bytree": 0.7786308379062736
+        "n_estimators": 209,
+        "max_depth": 3,
+        "learning_rate": 0.080188084618111,
+        "subsample": 0.7993028448714308,
+        "colsample_bytree": 0.656105419146273
       },
-      "run_id": "13c8d39d84b74a538dd71046b7667864"
+      "run_id": "df92499cfedf43e589421d7b3251d01e"
     },
     "SVM": {
-      "accuracy": 0.934156378600823,
-      "f1_score": 0.9340955564385516,
-      "precision": 0.9346645708099754,
-      "recall": 0.934156378600823,
+      "accuracy": 0.9176954732510288,
+      "f1_score": 0.9176613772997526,
+      "precision": 0.9188078645442986,
+      "recall": 0.9176954732510288,
       "params": {
-        "C": 9.37363240535402,
+        "C": 2.038804429665873,
         "kernel": "linear",
         "gamma": "scale"
       },
-      "run_id": "02086e380cc44d32bf5d812c1b691891"
+      "run_id": "4cebc4dd4c014fcb8d3b95b9d91b03a7"
     },
     "LightGBM": {
-      "accuracy": 0.9711934156378601,
-      "f1_score": 0.9710758921935212,
-      "precision": 0.9723715555933317,
-      "recall": 0.9711934156378601,
+      "accuracy": 0.9670781893004116,
+      "f1_score": 0.9670436001749035,
+      "precision": 0.9691381366871378,
+      "recall": 0.9670781893004116,
       "params": {
-        "n_estimators": 119,
-        "max_depth": 3,
-        "learning_rate": 0.25736018751592055,
-        "num_leaves": 20,
+        "n_estimators": 219,
+        "max_depth": 6,
+        "learning_rate": 0.04621260495944863,
+        "num_leaves": 70,
         "min_child_samples": 5,
-        "subsample": 0.9352696760995342,
-        "colsample_bytree": 0.6006176124745805
+        "subsample": 0.9998583358226819,
+        "colsample_bytree": 0.9560897760169726
       },
-      "run_id": "20bc3872086347f58955552ceda7f35b"
+      "run_id": "4b8145cafcfe4715a4def45e62102859"
     },
     "Gradient_Boosting": {
-      "accuracy": 0.9794238683127572,
-      "f1_score": 0.9794200812946553,
-      "precision": 0.980069026482322,
-      "recall": 0.9794238683127572,
+      "accuracy": 0.9835390946502057,
+      "f1_score": 0.9835383067165773,
+      "precision": 0.9838903944595001,
+      "recall": 0.9835390946502057,
       "params": {
-        "n_estimators": 77,
-        "max_depth": 6,
-        "learning_rate": 0.010157860744102359,
-        "subsample": 0.9107548540934559,
-        "min_samples_split": 7,
-        "min_samples_leaf": 1
+        "n_estimators": 296,
+        "max_depth": 9,
+        "learning_rate": 0.0434826067200854,
+        "subsample": 0.7755566318669559,
+        "min_samples_split": 4,
+        "min_samples_leaf": 2
       },
-      "run_id": "ef28d50c66144856aa1977b29802eb84"
+      "run_id": "b7883dbc8bca4a3e894a29d2fade6ce3"
     },
     "Extra_Trees": {
-      "accuracy": 0.9094650205761317,
-      "f1_score": 0.9093651547355251,
-      "precision": 0.9162226554039419,
-      "recall": 0.9094650205761317,
+      "accuracy": 0.9135802469135802,
+      "f1_score": 0.9134099581859012,
+      "precision": 0.9194833870211575,
+      "recall": 0.9135802469135802,
       "params": {
-        "n_estimators": 107,
-        "max_depth": 21,
-        "min_samples_split": 14,
+        "n_estimators": 126,
+        "max_depth": 29,
+        "min_samples_split": 18,
         "min_samples_leaf": 1,
         "max_features": "sqrt"
       },
-      "run_id": "dbe80a10ce5f47f19c48efa538f52554"
+      "run_id": "54701a2067d14858bc94a917fe23e291"
     }
   }
 }
