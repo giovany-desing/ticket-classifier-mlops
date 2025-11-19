@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+*.egg-info/
+
+# Data
+data/raw/*
+data/processed/*
+*.csv
+*.pkl
+*.joblib
+
+# Secrets
+.env
+*.pem
+*.key
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
