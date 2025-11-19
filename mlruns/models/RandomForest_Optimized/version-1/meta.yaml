@@ -1,0 +1,15 @@
+creation_timestamp: 1763592053171
+current_stage: None
+deployment_job_state: null
+description: null
+last_updated_timestamp: 1763592053171
+model_id: m-51c0b48b467c4140a539c585f28b72c3
+name: RandomForest_Optimized
+run_id: 69f3d0efbfe14144a952e48e94ee7263
+run_link: null
+source: models:/m-51c0b48b467c4140a539c585f28b72c3
+status: READY
+status_message: null
+storage_location: file:///Users/giovanysamaca/Desktop/ticket-classifier-mlops/mlruns/222164757497007653/models/m-51c0b48b467c4140a539c585f28b72c3/artifacts
+user_id: null
+version: 1

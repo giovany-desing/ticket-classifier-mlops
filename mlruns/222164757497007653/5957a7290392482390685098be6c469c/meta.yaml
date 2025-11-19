@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/giovanysamaca/Desktop/ticket-classifier-mlops/mlruns/222164757497007653/5957a7290392482390685098be6c469c/artifacts
+end_time: 1763592044451
+entry_point_name: ''
+experiment_id: '222164757497007653'
+lifecycle_stage: active
+run_id: 5957a7290392482390685098be6c469c
+run_name: Logistic_Regression_Optimized
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1763592040129
+status: 3
+tags: []
+user_id: giovanysamaca

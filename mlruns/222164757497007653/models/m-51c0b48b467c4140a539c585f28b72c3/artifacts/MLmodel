@@ -1,0 +1,22 @@
+artifact_path: file:///Users/giovanysamaca/Desktop/ticket-classifier-mlops/mlruns/222164757497007653/models/m-51c0b48b467c4140a539c585f28b72c3/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.11.1
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.7.2
+mlflow_version: 3.6.0
+model_id: m-51c0b48b467c4140a539c585f28b72c3
+model_size_bytes: 2103865
+model_uuid: m-51c0b48b467c4140a539c585f28b72c3
+prompts: null
+run_id: 69f3d0efbfe14144a952e48e94ee7263
+utc_time_created: '2025-11-19 22:40:49.983481'

@@ -1,0 +1,16 @@
+# -------------------
+# Configuración de Datos
+# -------------------
+data:
+  # Path para la data lectura de los datos sin procesar
+  raw_path: "data-tickets-train/dataset_tickets.csv"
+  # Path para guardar la data de los datos procesados
+  processed_path: "data_project/processed"
+  target_col: "etiqueta"
+
+# -------------------
+# Configuracion para experimento para MLflow
+# -------------------
+mlflow_tracking:
+  # Nombre del experimento en la UI de MLflow
+  experiment_name: "Clasificacion de tickets Fidudavivienda"

@@ -1,0 +1,15 @@
+creation_timestamp: 1763592135839
+current_stage: None
+deployment_job_state: null
+description: null
+last_updated_timestamp: 1763592135839
+model_id: m-93611c3cfd694b93911d6d48b951ee70
+name: SVM_Optimized
+run_id: 02086e380cc44d32bf5d812c1b691891
+run_link: null
+source: models:/m-93611c3cfd694b93911d6d48b951ee70
+status: READY
+status_message: null
+storage_location: file:///Users/giovanysamaca/Desktop/ticket-classifier-mlops/mlruns/222164757497007653/models/m-93611c3cfd694b93911d6d48b951ee70/artifacts
+user_id: null
+version: 1

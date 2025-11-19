@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/giovanysamaca/Desktop/ticket-classifier-mlops/mlruns/222164757497007653/13c8d39d84b74a538dd71046b7667864/artifacts
+end_time: 1763592125255
+entry_point_name: ''
+experiment_id: '222164757497007653'
+lifecycle_stage: active
+run_id: 13c8d39d84b74a538dd71046b7667864
+run_name: XGBoost_Optimized
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1763592118367
+status: 3
+tags: []
+user_id: giovanysamaca

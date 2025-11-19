@@ -1,0 +1,15 @@
+creation_timestamp: 1763592044443
+current_stage: None
+deployment_job_state: null
+description: null
+last_updated_timestamp: 1763592044443
+model_id: m-08ff8d3f9e6b422a9553b2b5e9a5000e
+name: LogisticRegression_Optimized
+run_id: 5957a7290392482390685098be6c469c
+run_link: null
+source: models:/m-08ff8d3f9e6b422a9553b2b5e9a5000e
+status: READY
+status_message: null
+storage_location: file:///Users/giovanysamaca/Desktop/ticket-classifier-mlops/mlruns/222164757497007653/models/m-08ff8d3f9e6b422a9553b2b5e9a5000e/artifacts
+user_id: null
+version: 1

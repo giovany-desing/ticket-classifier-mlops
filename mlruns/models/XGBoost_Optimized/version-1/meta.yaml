@@ -1,0 +1,15 @@
+creation_timestamp: 1763592125247
+current_stage: None
+deployment_job_state: null
+description: null
+last_updated_timestamp: 1763592125247
+model_id: m-c6dda0c5e0ed4e219922240703b3734c
+name: XGBoost_Optimized
+run_id: 13c8d39d84b74a538dd71046b7667864
+run_link: null
+source: models:/m-c6dda0c5e0ed4e219922240703b3734c
+status: READY
+status_message: null
+storage_location: file:///Users/giovanysamaca/Desktop/ticket-classifier-mlops/mlruns/222164757497007653/models/m-c6dda0c5e0ed4e219922240703b3734c/artifacts
+user_id: null
+version: 1
