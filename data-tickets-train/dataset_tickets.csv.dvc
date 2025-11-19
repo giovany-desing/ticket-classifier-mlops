@@ -1,0 +1,5 @@
+outs:
+- md5: e6e5c9f6d4e5ec800dad588184f812cc
+  size: 394168
+  hash: md5
+  path: dataset_tickets.csv

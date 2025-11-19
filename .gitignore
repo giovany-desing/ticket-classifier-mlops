@@ -25,4 +25,7 @@ data/processed/*
 .idea/
 
 # OS
-.DS_Store
+.DS_Store.env
+
+# AWS Credentials
+.env
