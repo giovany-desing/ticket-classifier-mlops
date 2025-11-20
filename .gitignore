@@ -36,3 +36,4 @@ data/processed/*
 
 # Pero NO ignores los .dvc files
 !/models/*.dvc
+mlruns/
