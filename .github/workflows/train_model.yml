@@ -124,7 +124,63 @@ jobs:
             echo "## ✅ Training Completed Successfully" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
-            python << 'EOF' >> $GITHUB_STEP_SUMMARY
+            # Usar Python para generar el summary
+            python << 'PYTHON_EOF'
+          import json
+          import sys
+          from pathlib import Path
+          
+          try:
+              with open('models/best_model_metadata.json', 'r') as f:
+                  metadata = json.load(f)
+              
+              print(f"**Best Model:** {metadata['model_name']}")
+              print(f"**F1-Score:** {metadata['f1_score']:.4f}")
+              print(f"**Timestamp:** {metadata['timestamp']}")
+              print(f"**Environment:** {metadata['environment']}")
+              print("")
+              
+              # Verificar DVC
+              dvc_file = Path('models/best_model.pkl.dvc')
+              if dvc_file.exists():
+                  print("**DVC Status:** ✅ Versioned in S3")
+              
+              print("")
+              print("### 📊 Model Comparison")
+              print("")
+              print("| Model | F1-Score | Accuracy | Precision | Recall |")
+              print("|-------|----------|----------|-----------|--------|")
+              
+              results = sorted(
+                  metadata['all_results'].items(),
+                  key=lambda x: x[1]['f1_score'],
+                  reverse=True
+              )
+              
+              for rank, (nombre, metricas) in enumerate(results, 1):
+                  emoji = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else ""
+                  print(f"| {emoji} {nombre} | {metricas['f1_score']:.4f} | {metricas['accuracy']:.4f} | {metricas['precision']:.4f} | {metricas['recall']:.4f} |")
+              
+              print("")
+              print("### 📥 How to Use This Model")
+              print("")
+              print("**Option 1: Pull from S3 (Recommended)**")
+              print("```bash")
+              print("dvc pull models/best_model.pkl.dvc")
+              print("```")
+              print("")
+              print("**Option 2: Download from Artifacts**")
+              print("- Go to this workflow run")
+              print("- Scroll down to 'Artifacts'")
+              print("- Download 'trained-model'")
+              
+          except Exception as e:
+              print(f"Error generating summary: {e}", file=sys.stderr)
+              sys.exit(1)
+          PYTHON_EOF
+            
+            # Agregar el output de Python al summary
+            python << 'PYTHON_EOF' >> $GITHUB_STEP_SUMMARY
           import json
           from pathlib import Path
           
@@ -137,10 +193,9 @@ jobs:
           print(f"**Environment:** {metadata['environment']}")
           print("")
           
-          # Verificar DVC
           dvc_file = Path('models/best_model.pkl.dvc')
           if dvc_file.exists():
-              print(f"**DVC Status:** ✅ Versioned in S3")
+              print("**DVC Status:** ✅ Versioned in S3")
           
           print("")
           print("### 📊 Model Comparison")
@@ -158,4 +213,19 @@ jobs:
               emoji = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else ""
               print(f"| {emoji} {nombre} | {metricas['f1_score']:.4f} | {metricas['accuracy']:.4f} | {metricas['precision']:.4f} | {metricas['recall']:.4f} |")
           
-   
+          print("")
+          print("### 📥 How to Use This Model")
+          print("")
+          print("**Pull from S3:**")
+          print("```bash")
+          print("dvc pull models/best_model.pkl.dvc")
+          print("```")
+          print("")
+          print("**Or download from Artifacts** (see below)")
+          PYTHON_EOF
+          
+          else
+            echo "## ❌ Training Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Check the logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
