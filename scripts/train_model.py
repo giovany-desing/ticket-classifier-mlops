@@ -249,10 +249,26 @@ def main():
         # ====================================================================
         
         logger.info("\n🔬 Configurando MLflow...")
-        mlflow.set_tracking_uri(f"file://{mlruns_dir}")
-        experiment_name = config["mlflow_tracking"]["experiment_name"]
-        mlflow.set_experiment(experiment_name)
+
         
+        mlruns_path = "./mlruns"
+        Path(mlruns_path).mkdir(exist_ok=True)
+
+       
+        tracking_uri = f"file://{os.path.abspath(mlruns_path)}"
+        mlflow.set_tracking_uri(tracking_uri)
+
+        
+        os.environ["MLFLOW_TRACKING_URI"] = tracking_uri
+
+        experiment_name = config["mlflow_tracking"]["experiment_name"]
+        experiment = mlflow.set_experiment(experiment_name)
+
+        logger.info("✓ Tracking URI: %s", mlflow.get_tracking_uri())
+        logger.info("✓ Experiment ID: %s", experiment.experiment_id)
+        logger.info("✓ Experimento: %s", experiment_name)
+        
+        ####
         logger.info("✓ Tracking URI: %s", mlflow.get_tracking_uri())
         logger.info("✓ Experimento: %s", experiment_name)
         
