@@ -124,7 +124,7 @@ jobs:
           AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
         run: |
           echo "🎯 Iniciando entrenamiento..."
-          python train_model/train_model.py
+          python scripts/train_model.py
           echo "✓ Entrenamiento completado"
       
       # ======================================================================
