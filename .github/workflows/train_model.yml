@@ -11,14 +11,12 @@ on:
   push:
     branches:
       - main
-      - develop
     paths:
       - 'data-tickets-train/**'
       - 'scripts/train_model.py'
       - 'utils/preprocessing_data.py'
       - 'config.yaml'
       - 'requirements.txt'
-      - '.github/workflows/train_model.yml' 
 
 env:
   PYTHON_VERSION: '3.9'
@@ -37,9 +35,6 @@ jobs:
       
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: 🐍 Setup Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
@@ -51,65 +46,30 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
-          pip list
       
       - name: 📚 Download NLTK data
         run: |
           python -c "
           import nltk
-          print('Descargando recursos NLTK...')
           nltk.download('punkt', quiet=True)
           nltk.download('punkt_tab', quiet=True)
           nltk.download('stopwords', quiet=True)
-          print('✓ Recursos NLTK descargados')
+          print('✓ NLTK resources ready')
           "
       
       # ======================================================================
       # DVC SETUP
       # ======================================================================
       
-      - name: 🗄️ Configure DVC
+      - name: 🗄️ Pull dataset from S3
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
         run: |
-          echo "📋 Configurando DVC..."
-          dvc version
-          dvc remote list
-          
-          echo "📥 Descargando dataset desde S3..."
+          echo "📥 Downloading dataset..."
           dvc pull data-tickets-train/dataset_tickets.csv.dvc
-          
-          echo "✓ Dataset descargado"
           ls -lh data-tickets-train/
-      
-      - name: 🔍 Verify dataset
-        run: |
-          python << 'EOF'
-          import pandas as pd
-          from pathlib import Path
-          
-          dataset_path = Path('data-tickets-train/dataset_tickets.csv')
-          
-          if not dataset_path.exists():
-              raise FileNotFoundError(f"Dataset no encontrado: {dataset_path}")
-          
-          df = pd.read_csv(dataset_path)
-          
-          print(f"✓ Dataset cargado correctamente")
-          print(f"  Filas: {len(df):,}")
-          print(f"  Columnas: {df.columns.tolist()}")
-          print(f"  Tamaño: {dataset_path.stat().st_size / (1024*1024):.2f} MB")
-          
-          required = ['short_description', 'close_notes', 'etiqueta']
-          missing = [col for col in required if col not in df.columns]
-          
-          if missing:
-              raise ValueError(f"Columnas faltantes: {missing}")
-          
-          print(f"✓ Todas las columnas requeridas presentes")
-          EOF
       
       # ======================================================================
       # TRAINING
@@ -123,75 +83,31 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
         run: |
-          echo "🎯 Iniciando entrenamiento..."
+          echo "🎯 Training models..."
           python scripts/train_model.py
-          echo "✓ Entrenamiento completado"
+          echo "✓ Training completed"
       
       # ======================================================================
-      # DVC COMMIT & PUSH
+      # SAVE ARTIFACTS (PARA DESCARGA MANUAL)
       # ======================================================================
       
-      - name: 📤 Version model with DVC
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
-        run: |
-          echo "📋 Versionando modelo con DVC..."
-          
-          # Verificar que el modelo existe
-          if [ ! -f "models/best_model.pkl" ]; then
-            echo "❌ Modelo no encontrado"
-            exit 1
-          fi
-          
-          # Verificar si hay cambios en el modelo
-          if [ -f "models/best_model.pkl.dvc" ]; then
-            echo "✓ Modelo ya trackeado, verificando cambios..."
-          else
-            echo "🆕 Primera vez trackeando modelo..."
-          fi
-          
-          # DVC add (crea o actualiza el .dvc file)
-          dvc add models/best_model.pkl
-          
-          # Push a S3 (el script ya lo hizo, pero por si acaso)
-          echo "☁️  Verificando push a S3..."
-          dvc push models/best_model.pkl.dvc
-          
-          echo "✓ Modelo versionado exitosamente"
+      - name: 💾 Upload trained model
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: trained-model
+          path: |
+            models/best_model.pkl
+            models/best_model.pkl.dvc
+            models/best_model_metadata.json
+          retention-days: 90
       
-      - name: 📝 Commit DVC files to Git
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          
-          # Agregar archivos DVC y metadata
-          git add models/best_model.pkl.dvc models/.gitignore models/best_model_metadata.json
-          
-          # Commit solo si hay cambios
-          if git diff --staged --quiet; then
-            echo "ℹ️  No hay cambios para commitear"
-          else
-            TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S')
-            git commit -m "🤖 Update model: ${TIMESTAMP} [skip ci]"
-            git push
-            echo "✓ Cambios pusheados a GitHub"
-          fi
-      
-      # ======================================================================
-      # SAVE ARTIFACTS (ACTUALIZADO A V4)
-      # ======================================================================
-      
-      - name: 💾 Upload artifacts
+      - name: 📊 Upload MLflow logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: training-artifacts-${{ github.sha }}
-          path: |
-            models/best_model_metadata.json
-            models/best_model.pkl.dvc
-            mlruns/
+          name: mlflow-runs
+          path: mlruns/
           retention-days: 30
       
       # ======================================================================
@@ -205,7 +121,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [ -f "models/best_model_metadata.json" ]; then
-            echo "## ✅ Training & Versioning Completed" >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ Training Completed Successfully" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
             python << 'EOF' >> $GITHUB_STEP_SUMMARY
@@ -219,19 +135,17 @@ jobs:
           print(f"**F1-Score:** {metadata['f1_score']:.4f}")
           print(f"**Timestamp:** {metadata['timestamp']}")
           print(f"**Environment:** {metadata['environment']}")
+          print("")
           
           # Verificar DVC
           dvc_file = Path('models/best_model.pkl.dvc')
           if dvc_file.exists():
-              print(f"**DVC Status:** ✅ Versioned")
-              print(f"**DVC File:** `models/best_model.pkl.dvc`")
-          else:
-              print(f"**DVC Status:** ⚠️ Not versioned")
+              print(f"**DVC Status:** ✅ Versioned in S3")
           
           print("")
-          print("### 📊 All Models Comparison")
+          print("### 📊 Model Comparison")
           print("")
-          print("| Model | Accuracy | F1-Score | Precision | Recall |")
+          print("| Model | F1-Score | Accuracy | Precision | Recall |")
           print("|-------|----------|----------|-----------|--------|")
           
           results = sorted(
@@ -242,38 +156,6 @@ jobs:
           
           for rank, (nombre, metricas) in enumerate(results, 1):
               emoji = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else ""
-              print(f"| {emoji} {nombre} | {metricas['accuracy']:.4f} | {metricas['f1_score']:.4f} | {metricas['precision']:.4f} | {metricas['recall']:.4f} |")
+              print(f"| {emoji} {nombre} | {metricas['f1_score']:.4f} | {metricas['accuracy']:.4f} | {metricas['precision']:.4f} | {metricas['recall']:.4f} |")
           
-          print("")
-          print("### 🗄️ DVC Commands")
-          print("")
-          print("To pull this model locally:")
-          print("```bash")
-          print("dvc pull models/best_model.pkl.dvc")
-          print("```")
-          
-          print("")
-          print("To view model history:")
-          print("```bash")
-          print("git log --oneline -- models/best_model.pkl.dvc")
-          print("```")
-          EOF
-          else
-            echo "## ❌ Training Failed" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Check the logs for details." >> $GITHUB_STEP_SUMMARY
-          fi
-      
-      # ======================================================================
-      # NOTIFICATIONS
-      # ======================================================================
-      
-      - name: 📧 Notify on success
-        if: success()
-        run: |
-          echo "✅ Modelo entrenado y versionado exitosamente"
-      
-      - name: 🚨 Notify on failure
-        if: failure()
-        run: |
-          echo "❌ Proceso falló. Revisar logs."
+   
