@@ -1,0 +1,10 @@
+# Ignore model files (DVC manages them)
+*.pkl
+*.h5
+*.pt
+*.pth
+*.ckpt
+*.model
+
+# Keep the directory structure
+!.gitignore
