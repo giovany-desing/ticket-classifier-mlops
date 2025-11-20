@@ -18,6 +18,7 @@ on:
       - 'utils/preprocessing_data.py'
       - 'config.yaml'
       - 'requirements.txt'
+      - '.github/workflows/train_model.yml' 
 
 env:
   PYTHON_VERSION: '3.9'
