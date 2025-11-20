@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/giovanysamaca/Desktop/ticket-classifier-mlops/mlruns/222164757497007653/b7883dbc8bca4a3e894a29d2fade6ce3/artifacts
+end_time: 1763596576790
+entry_point_name: ''
+experiment_id: '222164757497007653'
+lifecycle_stage: active
+run_id: b7883dbc8bca4a3e894a29d2fade6ce3
+run_name: GradientBoosting_Optimized
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1763596558517
+status: 3
+tags: []
+user_id: giovanysamaca

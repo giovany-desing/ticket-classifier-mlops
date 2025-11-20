@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/giovanysamaca/Desktop/ticket-classifier-mlops/mlruns/222164757497007653/4cebc4dd4c014fcb8d3b95b9d91b03a7/artifacts
+end_time: 1763596378979
+entry_point_name: ''
+experiment_id: '222164757497007653'
+lifecycle_stage: active
+run_id: 4cebc4dd4c014fcb8d3b95b9d91b03a7
+run_name: SVM_Optimized
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1763596375944
+status: 3
+tags: []
+user_id: giovanysamaca

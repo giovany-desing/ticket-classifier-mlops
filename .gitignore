@@ -29,3 +29,10 @@ data/processed/*
 
 # AWS Credentials
 .env
+
+# Models directory
+/models/best_model.pkl
+/models/*.pkl
+
+# Pero NO ignores los .dvc files
+!/models/*.dvc

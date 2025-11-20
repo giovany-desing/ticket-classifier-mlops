@@ -2,10 +2,8 @@
 # Configuración de Datos
 # -------------------
 data:
-  # Path para la data lectura de los datos sin procesar
-  raw_path: "data-tickets-train/dataset_tickets.csv"
-  # Path para guardar la data de los datos procesados
-  processed_path: "data_project/processed"
+  raw_path: "data-tickets-train"  # ← Sin el nombre del archivo
+  dataset_name: "dataset_tickets.csv"
   target_col: "etiqueta"
 
 # -------------------
@@ -14,3 +12,44 @@ data:
 mlflow_tracking:
   # Nombre del experimento en la UI de MLflow
   experiment_name: "Clasificacion de tickets Fidudavivienda"
+
+preprocessing:
+  custom_stopwords:
+    - "buen"
+    - "buenos"
+    - "buen" 
+    - "buenos"
+    - "dia" 
+    - "tardes"
+    - "buenas"
+    - "grupo"
+    - "asignación"
+    - "asignacin"
+    - "asignanar"
+    - "asignado"
+    - "davinci"
+    - "preventa"
+    - "fiduciaria"
+    - "respuesta"
+    - "proveedor"
+    - "favor"
+    - "pronta"
+    - "quedo"
+    - "atento"
+    - "sebastian"
+    - "sebastin"
+    - "prado"
+    - "vanegas"
+    - "identificación"
+    - "one"
+    - "id"
+    - "vinculacion"
+    - "preventas"
+    - "muchas"
+    - "gracias"
+    - "cliente"
+    - "atentos"
+    - "soporte"
+    - "cc"
+  language: "spanish"
+  apply_stemming: true

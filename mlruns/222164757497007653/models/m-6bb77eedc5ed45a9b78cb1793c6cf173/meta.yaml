@@ -1,0 +1,10 @@
+artifact_location: file:///Users/giovanysamaca/Desktop/ticket-classifier-mlops/mlruns/222164757497007653/models/m-6bb77eedc5ed45a9b78cb1793c6cf173/artifacts
+creation_timestamp: 1763596341473
+experiment_id: '222164757497007653'
+last_updated_timestamp: 1763596344173
+model_id: m-6bb77eedc5ed45a9b78cb1793c6cf173
+model_type: null
+name: model
+source_run_id: ee276ad3479a47e7b417404ed5d577a3
+status: 2
+status_message: null

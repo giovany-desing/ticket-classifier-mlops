@@ -1,7 +1,6 @@
-name: 🤖 Train ML Model
+name: 🤖 Train ML Model with DVC
 
 on:
-  # Ejecutar manualmente desde GitHub UI
   workflow_dispatch:
     inputs:
       description:
@@ -9,7 +8,6 @@ on:
         required: false
         default: 'Entrenamiento manual'
   
-  # Ejecutar cuando se actualiza el dataset o el código de entrenamiento
   push:
     branches:
       - main
@@ -21,19 +19,15 @@ on:
       - 'config.yaml'
       - 'requirements.txt'
 
-  # Programar entrenamiento automático (opcional)
-  # schedule:
-  #   - cron: '0 0 1 * *'  # Primer día de cada mes a medianoche UTC
-
 env:
   PYTHON_VERSION: '3.9'
   AWS_REGION: us-east-1
 
 jobs:
   train:
-    name: 🚀 Train and Optimize Models
+    name: 🚀 Train and Version Models
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # 1 hora máximo (ajusta según necesites)
+    timeout-minutes: 60
     
     steps:
       # ======================================================================
@@ -43,7 +37,8 @@ jobs:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Para tener todo el historial de git
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: 🐍 Setup Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v4
@@ -55,7 +50,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
-          pip list  # Para debugging
+          pip list
       
       - name: 📚 Download NLTK data
         run: |
@@ -106,7 +101,6 @@ jobs:
           print(f"  Columnas: {df.columns.tolist()}")
           print(f"  Tamaño: {dataset_path.stat().st_size / (1024*1024):.2f} MB")
           
-          # Verificar columnas requeridas
           required = ['short_description', 'close_notes', 'etiqueta']
           missing = [col for col in required if col not in df.columns]
           
@@ -122,72 +116,82 @@ jobs:
       
       - name: 🚀 Train models
         env:
-          CI: true  # Variable para que el script detecte CI
+          CI: true
           GITHUB_ACTIONS: true
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
         run: |
           echo "🎯 Iniciando entrenamiento..."
           python scripts/train_model.py
-          
           echo "✓ Entrenamiento completado"
       
       # ======================================================================
-      # SAVE ARTIFACTS
+      # DVC COMMIT & PUSH
       # ======================================================================
       
-      - name: 💾 Upload trained model
-        uses: actions/upload-artifact@v3
-        if: success()
-        with:
-          name: trained-model-${{ github.sha }}
-          path: |
-            models/best_model.pkl
-            models/best_model_metadata.json
-          retention-days: 90
-      
-      - name: 📊 Upload MLflow artifacts
-        uses: actions/upload-artifact@v3
-        if: always()
-        with:
-          name: mlflow-runs-${{ github.sha }}
-          path: mlruns/
-          retention-days: 30
-      
-      # ======================================================================
-      # UPLOAD TO S3 (OPCIONAL)
-      # ======================================================================
-      
-      - name: ☁️ Upload model to S3
-        if: success() && github.ref == 'refs/heads/main'
+      - name: 📤 Version model with DVC
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
         run: |
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          BUCKET_NAME="${{ secrets.S3_MODELS_BUCKET }}"
+          echo "📋 Versionando modelo con DVC..."
           
-          if [ -z "$BUCKET_NAME" ]; then
-            echo "⚠️  S3_MODELS_BUCKET no configurado, saltando upload a S3"
-            exit 0
+          # Verificar que el modelo existe
+          if [ ! -f "models/best_model.pkl" ]; then
+            echo "❌ Modelo no encontrado"
+            exit 1
           fi
           
-          echo "☁️  Subiendo modelo a S3..."
+          # Verificar si hay cambios en el modelo
+          if [ -f "models/best_model.pkl.dvc" ]; then
+            echo "✓ Modelo ya trackeado, verificando cambios..."
+          else
+            echo "🆕 Primera vez trackeando modelo..."
+          fi
           
-          # Subir con timestamp
-          aws s3 cp models/best_model.pkl \
-            s3://${BUCKET_NAME}/models/best_model_${TIMESTAMP}.pkl
+          # DVC add (crea o actualiza el .dvc file)
+          dvc add models/best_model.pkl
           
-          aws s3 cp models/best_model_metadata.json \
-            s3://${BUCKET_NAME}/models/best_model_metadata_${TIMESTAMP}.json
+          # Push a S3 (el script ya lo hizo, pero por si acaso)
+          echo "☁️  Verificando push a S3..."
+          dvc push models/best_model.pkl.dvc
           
-          # Subir como "latest" (sobrescribe el anterior)
-          aws s3 cp models/best_model.pkl \
-            s3://${BUCKET_NAME}/models/latest/best_model.pkl
+          echo "✓ Modelo versionado exitosamente"
+      
+      - name: 📝 Commit DVC files to Git
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           
-          aws s3 cp models/best_model_metadata.json \
-            s3://${BUCKET_NAME}/models/latest/best_model_metadata.json
+          # Agregar archivos DVC y metadata
+          git add models/best_model.pkl.dvc models/.gitignore models/best_model_metadata.json
           
-          echo "✓ Modelo subido a S3"
+          # Commit solo si hay cambios
+          if git diff --staged --quiet; then
+            echo "ℹ️  No hay cambios para commitear"
+          else
+            TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S')
+            git commit -m "🤖 Update model: ${TIMESTAMP} [skip ci]"
+            git push
+            echo "✓ Cambios pusheados a GitHub"
+          fi
+      
+      # ======================================================================
+      # SAVE ARTIFACTS
+      # ======================================================================
+      
+      - name: 💾 Upload artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: training-artifacts-${{ github.sha }}
+          path: |
+            models/best_model_metadata.json
+            models/best_model.pkl.dvc
+            mlruns/
+          retention-days: 30
       
       # ======================================================================
       # SUMMARY
@@ -200,11 +204,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [ -f "models/best_model_metadata.json" ]; then
-            echo "## ✅ Training Completed Successfully" >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ Training & Versioning Completed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
             python << 'EOF' >> $GITHUB_STEP_SUMMARY
           import json
+          from pathlib import Path
           
           with open('models/best_model_metadata.json', 'r') as f:
               metadata = json.load(f)
@@ -213,6 +218,15 @@ jobs:
           print(f"**F1-Score:** {metadata['f1_score']:.4f}")
           print(f"**Timestamp:** {metadata['timestamp']}")
           print(f"**Environment:** {metadata['environment']}")
+          
+          # Verificar DVC
+          dvc_file = Path('models/best_model.pkl.dvc')
+          if dvc_file.exists():
+              print(f"**DVC Status:** ✅ Versioned")
+              print(f"**DVC File:** `models/best_model.pkl.dvc`")
+          else:
+              print(f"**DVC Status:** ⚠️ Not versioned")
+          
           print("")
           print("### 📊 All Models Comparison")
           print("")
@@ -225,8 +239,23 @@ jobs:
               reverse=True
           )
           
-          for nombre, metricas in results:
-              print(f"| {nombre} | {metricas['accuracy']:.4f} | {metricas['f1_score']:.4f} | {metricas['precision']:.4f} | {metricas['recall']:.4f} |")
+          for rank, (nombre, metricas) in enumerate(results, 1):
+              emoji = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else ""
+              print(f"| {emoji} {nombre} | {metricas['accuracy']:.4f} | {metricas['f1_score']:.4f} | {metricas['precision']:.4f} | {metricas['recall']:.4f} |")
+          
+          print("")
+          print("### 🗄️ DVC Commands")
+          print("")
+          print("To pull this model locally:")
+          print("```bash")
+          print("dvc pull models/best_model.pkl.dvc")
+          print("```")
+          
+          print("")
+          print("To view model history:")
+          print("```bash")
+          print("git log --oneline -- models/best_model.pkl.dvc")
+          print("```")
           EOF
           else
             echo "## ❌ Training Failed" >> $GITHUB_STEP_SUMMARY
@@ -235,18 +264,15 @@ jobs:
           fi
       
       # ======================================================================
-      # NOTIFICATIONS (OPCIONAL)
+      # NOTIFICATIONS
       # ======================================================================
       
       - name: 📧 Notify on success
         if: success()
         run: |
-          echo "✅ Entrenamiento completado exitosamente"
-          # Aquí puedes agregar notificaciones a Slack, Discord, email, etc.
+          echo "✅ Modelo entrenado y versionado exitosamente"
       
       - name: 🚨 Notify on failure
         if: failure()
         run: |
-          echo "❌ Entrenamiento falló"
-          # Notificación de error
-```
+          echo "❌ Proceso falló. Revisar logs."
