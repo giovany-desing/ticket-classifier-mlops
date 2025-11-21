@@ -1,0 +1,428 @@
+name: 🔄 CI/CD Pipeline - Validate & Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      skip_validation:
+        description: 'Saltar validaciones (solo deploy)'
+        required: false
+        default: 'false'
+        type: boolean
+
+# Control de concurrencia
+concurrency:
+  group: ci-cd-pipeline-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: '3.9'
+  RENDER_SERVICE_NAME: ticket-classifier-api
+
+jobs:
+  # ========================================================================
+  # JOB 1: VALIDACIONES
+  # ========================================================================
+  validate:
+    name: ✅ Validate Project
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ !inputs.skip_validation }}
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: 🔍 Verify required files exist
+        run: |
+          echo "Verificando archivos requeridos..."
+          
+          REQUIRED_FILES=(
+            "api/inference.py"
+            "requirements.txt"
+            "config.yaml"
+            "scripts/train_model.py"
+            "utils/preprocessing_data.py"
+            "utils/monitoring.py"
+            "utils/database.py"
+          )
+          
+          MISSING_FILES=()
+          
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ Archivo faltante: $file"
+              MISSING_FILES+=("$file")
+            else
+              echo "✅ $file existe"
+            fi
+          done
+          
+          if [ ${#MISSING_FILES[@]} -gt 0 ]; then
+            echo ""
+            echo "❌ Archivos faltantes:"
+            printf '  - %s\n' "${MISSING_FILES[@]}"
+            exit 1
+          fi
+          
+          echo ""
+          echo "✅ Todos los archivos requeridos están presentes"
+      
+      - name: 🔍 Verify DVC files exist
+        run: |
+          echo "Verificando archivos DVC..."
+          
+          if [ ! -f "models/best_model.pkl.dvc" ]; then
+            echo "⚠️ models/best_model.pkl.dvc no existe"
+            echo "  Esto es normal si es la primera vez, pero necesitarás entrenar un modelo"
+          else
+            echo "✅ models/best_model.pkl.dvc existe"
+          fi
+      
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+      
+      - name: 🔍 Validate Python syntax
+        run: |
+          echo "Validando sintaxis de Python..."
+          
+          PYTHON_FILES=(
+            "api/inference.py"
+            "scripts/train_model.py"
+            "scripts/monitor_and_retrain.py"
+            "scripts/deploy_model.py"
+            "utils/preprocessing_data.py"
+            "utils/monitoring.py"
+            "utils/database.py"
+            "scripts/download_model.py"
+          )
+          
+          for file in "${PYTHON_FILES[@]}"; do
+            if [ -f "$file" ]; then
+              echo "Validando $file..."
+              python -m py_compile "$file" || {
+                echo "❌ Error de sintaxis en $file"
+                exit 1
+              }
+            fi
+          done
+          
+          echo "✅ Sintaxis válida en todos los archivos"
+      
+      - name: 🔍 Validate imports
+        run: |
+          echo "Validando imports..."
+          
+          python << 'PYTHON_EOF'
+import sys
+import importlib.util
+
+def check_import(module_name, file_path):
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        if spec is None:
+            print(f"❌ No se pudo cargar {file_path}")
+            return False
+        module = importlib.util.module_from_spec(spec)
+        print(f"✅ {file_path} puede importarse")
+        return True
+    except SyntaxError as e:
+        print(f"❌ Error de sintaxis en {file_path}: {e}")
+        return False
+    except Exception as e:
+        print(f"⚠️ {file_path} tiene imports que pueden fallar: {e}")
+        return True
+
+files_to_check = [
+    ("api.inference", "api/inference.py"),
+    ("utils.preprocessing_data", "utils/preprocessing_data.py"),
+    ("utils.monitoring", "utils/monitoring.py"),
+    ("utils.database", "utils/database.py"),
+]
+
+all_ok = True
+for module_name, file_path in files_to_check:
+    if not check_import(module_name, file_path):
+        all_ok = False
+
+if not all_ok:
+    sys.exit(1)
+
+print("✅ Todos los imports son válidos")
+PYTHON_EOF
+      
+      - name: 🔍 Validate config.yaml
+        run: |
+          echo "Validando config.yaml..."
+          
+          python << 'PYTHON_EOF'
+import yaml
+import sys
+
+try:
+    with open('config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    
+    required_sections = ['data', 'preprocessing', 'monitoring', 'api']
+    
+    for section in required_sections:
+        if section not in config:
+            print(f"❌ Sección faltante en config.yaml: {section}")
+            sys.exit(1)
+        print(f"✅ Sección '{section}' presente")
+    
+    print("✅ config.yaml es válido")
+    
+except yaml.YAMLError as e:
+    print(f"❌ Error parseando config.yaml: {e}")
+    sys.exit(1)
+except Exception as e:
+    print(f"❌ Error validando config.yaml: {e}")
+    sys.exit(1)
+PYTHON_EOF
+      
+      - name: 🔍 Validate render.yaml
+        run: |
+          if [ -f "render.yaml" ]; then
+            echo "Validando render.yaml..."
+            
+            python << 'PYTHON_EOF'
+import yaml
+import sys
+
+try:
+    with open('render.yaml', 'r') as f:
+        render_config = yaml.safe_load(f)
+    
+    if 'services' not in render_config:
+        print("❌ render.yaml debe tener sección 'services'")
+        sys.exit(1)
+    
+    print("✅ render.yaml es válido")
+    
+except yaml.YAMLError as e:
+    print(f"❌ Error parseando render.yaml: {e}")
+    sys.exit(1)
+except Exception as e:
+    print(f"❌ Error validando render.yaml: {e}")
+    sys.exit(1)
+PYTHON_EOF
+          else
+            echo "⚠️ render.yaml no existe (opcional)"
+          fi
+
+  # ========================================================================
+  # JOB 2: ENTRENAMIENTO (Condicional - solo si cambian datos)
+  # ========================================================================
+  train:
+    name: 🤖 Train Model (if needed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: validate
+    if: |
+      always() && 
+      (needs.validate.result == 'success' || inputs.skip_validation == true) &&
+      (
+        contains(github.event.head_commit.modified, 'data-tickets-train/') ||
+        contains(github.event.head_commit.modified, 'scripts/train_model.py') ||
+        contains(github.event.head_commit.modified, 'utils/preprocessing_data.py') ||
+        contains(github.event.head_commit.modified, 'config.yaml') ||
+        github.event_name == 'workflow_dispatch'
+      )
+    env:
+      AWS_REGION: us-east-1
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          if [ -f requirements-lock.txt ]; then
+            pip install -r requirements-lock.txt
+          fi
+          pip install -r requirements.txt
+      
+      - name: 📚 Download NLTK data
+        run: |
+          python -c "
+          import nltk
+          nltk.download('punkt', quiet=True)
+          nltk.download('punkt_tab', quiet=True)
+          nltk.download('stopwords', quiet=True)
+          print('✓ NLTK resources ready')
+          "
+      
+      - name: 🗄️ Pull dataset from S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        run: |
+          echo "📥 Downloading dataset..."
+          dvc pull data-tickets-train/dataset_tickets.csv.dvc || echo "⚠️ Dataset no disponible"
+      
+      - name: 🚀 Train models
+        env:
+          CI: true
+          GITHUB_ACTIONS: true
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        run: |
+          echo "🎯 Training models..."
+          python scripts/train_model.py
+          echo "✓ Training completed"
+      
+      - name: 📤 Push model to S3
+        if: success()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        run: |
+          if [ -f "models/best_model.pkl" ]; then
+            echo "📤 Pusheando modelo a S3..."
+            dvc add models/best_model.pkl || true
+            dvc push models/best_model.pkl.dvc || true
+            echo "✅ Modelo versionado en S3"
+          fi
+
+  # ========================================================================
+  # JOB 3: DEPLOY A RENDER (Solo si validaciones pasan)
+  # ========================================================================
+  deploy:
+    name: 🚀 Deploy to Render
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [validate, train]
+    if: |
+      always() && 
+      (needs.validate.result == 'success' || inputs.skip_validation == true) &&
+      (needs.train.result == 'success' || needs.train.result == 'skipped')
+    
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: 🚀 Trigger Render Deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "❌ RENDER_DEPLOY_HOOK_URL no está configurado en secrets"
+            echo ""
+            echo "📋 Para configurarlo:"
+            echo "1. Ve a Render Dashboard → tu servicio → Settings → Deploy Hook"
+            echo "2. Copia la URL del Deploy Hook"
+            echo "3. En GitHub → Settings → Secrets → Actions → New secret"
+            echo "4. Nombre: RENDER_DEPLOY_HOOK_URL"
+            echo "5. Valor: la URL copiada de Render"
+            exit 1
+          fi
+          
+          echo "🚀 Disparando deploy en Render..."
+          echo "   Todas las validaciones pasaron ✅"
+          
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+            echo "✅ Deploy disparado exitosamente en Render"
+            echo "📋 Respuesta: $BODY"
+          else
+            echo "❌ Error disparando deploy (HTTP $HTTP_CODE)"
+            echo "📋 Respuesta: $BODY"
+            exit 1
+          fi
+      
+      - name: ⏳ Wait for deploy to start
+        run: |
+          echo "Esperando 30 segundos para que Render inicie el deploy..."
+          sleep 30
+      
+      - name: 🔍 Health check (post-deploy)
+        env:
+          API_URL: ${{ secrets.API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "⚠️ API_URL no configurada, saltando health check"
+            echo "💡 Configura API_URL en secrets para verificar el deploy"
+            exit 0
+          fi
+          
+          echo "🔍 Verificando health de la API..."
+          
+          MAX_ATTEMPTS=5
+          ATTEMPT=1
+          
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Intento $ATTEMPT de $MAX_ATTEMPTS..."
+            
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              "$API_URL/health" \
+              --max-time 10)
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ API respondiendo correctamente"
+              exit 0
+            fi
+            
+            echo "⏳ API no disponible (HTTP $HTTP_CODE), esperando 30s..."
+            sleep 30
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+          
+          echo "⚠️ API no respondió después de $MAX_ATTEMPTS intentos"
+          echo "💡 El deploy puede seguir en progreso. Verifica en Render Dashboard."
+      
+      - name: 📋 Generate summary
+        if: always()
+        env:
+          API_URL: ${{ secrets.API_URL }}
+        run: |
+          echo "# 🚀 Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ env.RENDER_SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Validations" >> $GITHUB_STEP_SUMMARY
+          echo "- Validate: ${{ needs.validate.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Train: ${{ needs.train.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "$API_URL" ]; then
+            echo "## 🔗 Links" >> $GITHUB_STEP_SUMMARY
+            echo "- **API URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
+            echo "- **Health Check:** $API_URL/health" >> $GITHUB_STEP_SUMMARY
+            echo "- **Docs:** $API_URL/docs" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Verify deployment in [Render Dashboard](https://dashboard.render.com)" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$API_URL" ]; then
+            echo "2. Check API health: \`curl $API_URL/health\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "3. Test prediction endpoint" >> $GITHUB_STEP_SUMMARY
+

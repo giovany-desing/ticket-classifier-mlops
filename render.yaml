@@ -1,0 +1,37 @@
+services:
+  # API FastAPI
+  - type: web
+    name: ticket-classifier-api
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      # Descargar modelo desde S3 usando script dedicado
+      echo "📥 Descargando modelo desde S3..."
+      python scripts/download_model.py || echo "⚠️ No se pudo descargar modelo, la API funcionará sin modelo inicial"
+    startCommand: uvicorn api.inference:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.18
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_DEFAULT_REGION
+        value: us-east-1
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: API_KEY
+        generateValue: true
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: https://ticket-classifier-api.onrender.com
+      - key: LOG_LEVEL
+        value: INFO
+

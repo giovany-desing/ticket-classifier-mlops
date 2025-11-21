@@ -21,6 +21,8 @@ from airflow.utils.task_group import TaskGroup
 from airflow.models import Variable
 import os
 import sys
+import json
+import requests
 from pathlib import Path
 
 # Agregar raíz del proyecto al path
@@ -36,8 +38,8 @@ default_args = {
     'depends_on_past': False,
     'email_on_failure': True,
     'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=5),
+    'retries': 3,  # Más reintentos
+    'retry_delay': timedelta(minutes=2),  # Delay inicial más corto
     'start_date': datetime(2024, 1, 1),
 }
 
@@ -115,12 +117,19 @@ def evaluate_model_performance(**context):
             # Leer predicciones recientes con labels
             predictions = []
             with open(logger_path, 'r') as f:
-                for line in f:
+                for line_number, line in enumerate(f, 1):
                     try:
                         entry = json.loads(line)
                         if entry.get('true_label') and entry.get('correct') is not None:
                             predictions.append(entry)
-                    except:
+                    except json.JSONDecodeError as e:
+                        print(f"JSON inválido en línea {line_number}: {e}")
+                        continue
+                    except (KeyError, ValueError) as e:
+                        print(f"Datos inválidos en línea {line_number}: {e}")
+                        continue
+                    except Exception as e:
+                        print(f"Error inesperado en línea {line_number}: {e}")
                         continue
             
             if len(predictions) >= 50:
@@ -146,12 +155,18 @@ def evaluate_model_performance(**context):
 
 def decide_retraining(**context):
     """Decide si se necesita reentrenamiento basado en drift y performance"""
-    # Obtener resultados de drift
-    drift_detected = context['ti'].xcom_pull(key='drift_detected', task_ids='check_drift')
-    drift_score = context['ti'].xcom_pull(key='drift_score', task_ids='check_drift')
+    # Obtener resultados de drift (usar path completo con TaskGroup)
+    drift_detected = context['ti'].xcom_pull(key='drift_detected', task_ids='monitoring.check_drift')
+    drift_score = context['ti'].xcom_pull(key='drift_score', task_ids='monitoring.check_drift')
     
-    # Obtener métricas actuales
-    current_metrics = context['ti'].xcom_pull(key='current_metrics', task_ids='evaluate_performance')
+    # Validar None
+    if drift_detected is None:
+        drift_detected = False
+    if drift_score is None:
+        drift_score = 0.0
+    
+    # Obtener métricas actuales (usar path completo con TaskGroup)
+    current_metrics = context['ti'].xcom_pull(key='current_metrics', task_ids='monitoring.evaluate_performance')
     
     # Obtener métricas del modelo entrenado
     metadata_path = project_root / "models" / "best_model_metadata.json"
@@ -193,6 +208,22 @@ def decide_retraining(**context):
     
     return should_retrain
 
+def save_current_metrics(**context):
+    """Guarda métricas del modelo actual ANTES de reentrenar"""
+    import json
+    
+    metadata_path = project_root / "models" / "best_model_metadata.json"
+    
+    if metadata_path.exists():
+        with open(metadata_path, 'r') as f:
+            current_metrics = json.load(f)
+        context['ti'].xcom_push(key='pre_training_metrics', value=current_metrics)
+        print(f"Saved pre-training metrics: F1={current_metrics.get('f1_score', 0.0)}")
+        return current_metrics
+    
+    print("No existing model metadata found")
+    return None
+
 def train_model(**context):
     """Entrena el modelo"""
     import subprocess
@@ -216,34 +247,43 @@ def train_model(**context):
     return True
 
 def compare_models(**context):
-    """Compara el nuevo modelo con el actual"""
+    """Compara modelo anterior con el nuevo entrenado"""
     import json
     
-    # Cargar métricas del modelo actual (antes del entrenamiento)
-    old_metadata_path = project_root / "models" / "best_model_metadata.json"
-    old_f1 = None
-    if old_metadata_path.exists():
-        with open(old_metadata_path, 'r') as f:
-            old_metadata = json.load(f)
-            old_f1 = old_metadata.get('f1_score', 0.0)
+    # Obtener métricas del modelo ANTERIOR (guardadas antes del entrenamiento)
+    old_metrics = context['ti'].xcom_pull(
+        key='pre_training_metrics',
+        task_ids='retraining.save_current_metrics'
+    )
     
-    # Cargar métricas del nuevo modelo
+    # Cargar métricas del NUEVO modelo (recién entrenado)
     new_metadata_path = project_root / "models" / "best_model_metadata.json"
+    
     if not new_metadata_path.exists():
-        raise Exception("New model metadata not found")
+        print("No se encontró metadata del nuevo modelo")
+        return False
     
     with open(new_metadata_path, 'r') as f:
         new_metadata = json.load(f)
-        new_f1 = new_metadata.get('f1_score', 0.0)
     
-    improvement = new_f1 - old_f1 if old_f1 else 0.0
+    new_f1 = new_metadata.get('f1_score', 0.0)
+    old_f1 = old_metrics.get('f1_score', 0.0) if old_metrics else 0.0
+    
+    # Calcular mejora
+    improvement = new_f1 - old_f1
     min_improvement = float(Variable.get("MIN_IMPROVEMENT_FOR_DEPLOY", default_var="0.01"))
     
-    should_deploy = improvement > min_improvement
+    print(f"F1 anterior: {old_f1:.4f}")
+    print(f"F1 nuevo: {new_f1:.4f}")
+    print(f"Mejora: {improvement:.4f} (mínimo requerido: {min_improvement})")
     
+    should_deploy = improvement >= min_improvement
+    
+    # Guardar resultado para siguiente tarea
+    context['ti'].xcom_push(key='should_deploy', value=should_deploy)
+    context['ti'].xcom_push(key='improvement', value=improvement)
     context['ti'].xcom_push(key='new_f1', value=new_f1)
     context['ti'].xcom_push(key='old_f1', value=old_f1)
-    context['ti'].xcom_push(key='improvement', value=improvement)
     context['ti'].xcom_push(key='should_deploy', value=should_deploy)
     
     print(f"Old F1: {old_f1:.4f}")
@@ -320,6 +360,8 @@ with DAG(
     description='Pipeline completo de MLOps: Monitoreo → Reentrenamiento → Deploy',
     schedule_interval=timedelta(hours=6),  # Cada 6 horas
     catchup=False,
+    max_active_runs=1,  # Solo un run activo a la vez
+    concurrency=4,  # Máximo 4 tareas simultáneas
     tags=['mlops', 'ticket-classifier', 'monitoring', 'retraining'],
 ) as dag:
     
@@ -370,6 +412,12 @@ with DAG(
     
     with TaskGroup('retraining', tooltip="Reentrenamiento del modelo") as retraining_group:
         
+        save_metrics = PythonOperator(
+            task_id='save_current_metrics',
+            python_callable=save_current_metrics,
+            doc_md="Guarda métricas del modelo actual antes de reentrenar"
+        )
+        
         train_new_model = PythonOperator(
             task_id='train_model',
             python_callable=train_model,
@@ -382,11 +430,50 @@ with DAG(
             doc_md="Compara nuevo modelo con el actual"
         )
         
-        train_new_model >> compare_models_task
+        save_metrics >> train_new_model >> compare_models_task
     
     # ========================================================================
     # DEPLOY GROUP (condicional)
     # ========================================================================
+    
+    def reload_api_model(**context):
+        """Recarga el modelo en la API después del deploy"""
+        import requests
+        
+        api_url = Variable.get("API_URL", default_var="http://localhost:8000")
+        admin_api_key = Variable.get("ADMIN_API_KEY", default_var="")
+        
+        if not admin_api_key:
+            print("[WARN] ADMIN_API_KEY no configurada, saltando hot reload")
+            return {"status": "skipped", "reason": "no_api_key"}
+        
+        try:
+            response = requests.post(
+                f"{api_url}/admin/reload-model",
+                headers={"X-API-Key": admin_api_key},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(f"[OK] Modelo recargado exitosamente")
+                print(f"    Modelo: {data.get('model_name')}")
+                print(f"    F1 Score: {data.get('f1_score')}")
+                return {"status": "success", "data": data}
+            else:
+                print(f"[ERROR] Error recargando modelo: {response.status_code}")
+                print(f"    Response: {response.text}")
+                return {"status": "error", "code": response.status_code}
+        
+        except requests.exceptions.Timeout:
+            print("[ERROR] Timeout conectando a la API")
+            return {"status": "error", "reason": "timeout"}
+        except requests.exceptions.ConnectionError:
+            print("[ERROR] No se pudo conectar a la API")
+            return {"status": "error", "reason": "connection_error"}
+        except Exception as e:
+            print(f"[ERROR] Error inesperado: {e}")
+            return {"status": "error", "reason": str(e)}
     
     with TaskGroup('deploy', tooltip="Deploy del modelo") as deploy_group:
         
@@ -402,7 +489,13 @@ with DAG(
             doc_md="Push del modelo a S3 con DVC"
         )
         
-        deploy_new_model >> push_to_s3
+        reload_api = PythonOperator(
+            task_id='reload_api_model',
+            python_callable=reload_api_model,
+            doc_md="Recarga el modelo en la API sin reiniciar"
+        )
+        
+        deploy_new_model >> push_to_s3 >> reload_api
     
     # ========================================================================
     # END

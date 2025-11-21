@@ -49,6 +49,7 @@ from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 
 import optuna
+from optuna.samplers import TPESampler
 
 # ============================================================================
 # CONFIGURACIÓN DE NLTK (CRÍTICO PARA CI/CD)
@@ -317,7 +318,12 @@ def main():
             )
             return scores.mean()
         
-        study_lr = optuna.create_study(direction='maximize', study_name='LogisticRegression')
+        sampler = TPESampler(seed=RANDOM_SEED)
+        study_lr = optuna.create_study(
+            direction='maximize',
+            study_name='LogisticRegression',
+            sampler=sampler
+        )
         study_lr.optimize(objective_lr, n_trials=CONFIG['n_trials'], show_progress_bar=CONFIG['show_progress'])
         
         logger.info("✓ Mejores hiperparámetros: %s", study_lr.best_params)
@@ -408,7 +414,12 @@ def main():
             )
             return scores.mean()
         
-        study_rf = optuna.create_study(direction='maximize', study_name='RandomForest')
+        sampler = TPESampler(seed=RANDOM_SEED)
+        study_rf = optuna.create_study(
+            direction='maximize',
+            study_name='RandomForest',
+            sampler=sampler
+        )
         study_rf.optimize(objective_rf, n_trials=CONFIG['n_trials'], show_progress_bar=CONFIG['show_progress'])
         
         logger.info("✓ Mejores hiperparámetros: %s", study_rf.best_params)
@@ -498,7 +509,12 @@ def main():
             )
             return scores.mean()
         
-        study_xgb = optuna.create_study(direction='maximize', study_name='XGBoost')
+        sampler = TPESampler(seed=RANDOM_SEED)
+        study_xgb = optuna.create_study(
+            direction='maximize',
+            study_name='XGBoost',
+            sampler=sampler
+        )
         study_xgb.optimize(objective_xgb, n_trials=CONFIG['n_trials'], show_progress_bar=CONFIG['show_progress'])
         
         logger.info("✓ Mejores hiperparámetros: %s", study_xgb.best_params)
@@ -585,7 +601,12 @@ def main():
             )
             return scores.mean()
         
-        study_svm = optuna.create_study(direction='maximize', study_name='SVM')
+        sampler = TPESampler(seed=RANDOM_SEED)
+        study_svm = optuna.create_study(
+            direction='maximize',
+            study_name='SVM',
+            sampler=sampler
+        )
         study_svm.optimize(objective_svm, n_trials=15, show_progress_bar=CONFIG['show_progress'])
         
         logger.info("✓ Mejores hiperparámetros: %s", study_svm.best_params)
@@ -676,7 +697,12 @@ def main():
             )
             return scores.mean()
         
-        study_lgbm = optuna.create_study(direction='maximize', study_name='LightGBM')
+        sampler = TPESampler(seed=RANDOM_SEED)
+        study_lgbm = optuna.create_study(
+            direction='maximize',
+            study_name='LightGBM',
+            sampler=sampler
+        )
         study_lgbm.optimize(objective_lgbm, n_trials=CONFIG['n_trials'], show_progress_bar=CONFIG['show_progress'])
         
         logger.info("✓ Mejores hiperparámetros: %s", study_lgbm.best_params)
@@ -765,7 +791,12 @@ def main():
             )
             return scores.mean()
         
-        study_gb = optuna.create_study(direction='maximize', study_name='GradientBoosting')
+        sampler = TPESampler(seed=RANDOM_SEED)
+        study_gb = optuna.create_study(
+            direction='maximize',
+            study_name='GradientBoosting',
+            sampler=sampler
+        )
         study_gb.optimize(objective_gb, n_trials=CONFIG['n_trials'], show_progress_bar=CONFIG['show_progress'])
         
         logger.info("✓ Mejores hiperparámetros: %s", study_gb.best_params)
@@ -853,7 +884,12 @@ def main():
             )
             return scores.mean()
         
-        study_et = optuna.create_study(direction='maximize', study_name='ExtraTrees')
+        sampler = TPESampler(seed=RANDOM_SEED)
+        study_et = optuna.create_study(
+            direction='maximize',
+            study_name='ExtraTrees',
+            sampler=sampler
+        )
         study_et.optimize(objective_et, n_trials=CONFIG['n_trials'], show_progress_bar=CONFIG['show_progress'])
         
         logger.info("✓ Mejores hiperparámetros: %s", study_et.best_params)

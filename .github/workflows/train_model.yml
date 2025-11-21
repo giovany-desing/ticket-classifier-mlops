@@ -18,6 +18,11 @@ on:
       - 'config.yaml'
       - 'requirements.txt'
 
+# Control de concurrencia
+concurrency:
+  group: training-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   PYTHON_VERSION: '3.9'
   AWS_REGION: us-east-1
@@ -114,6 +119,40 @@ jobs:
           name: mlflow-runs
           path: mlruns/
           retention-days: 30
+      
+      # ======================================================================
+      # HOT RELOAD API MODEL
+      # ======================================================================
+      
+      - name: 🔄 Hot reload API model
+        if: success()
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+        run: |
+          if [ -z "$API_URL" ] || [ -z "$ADMIN_API_KEY" ]; then
+            echo "⚠️ API_URL o ADMIN_API_KEY no configuradas, saltando hot reload"
+            exit 0
+          fi
+          
+          echo "🔄 Recargando modelo en API..."
+          
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "$API_URL/admin/reload-model" \
+            -H "X-API-Key: $ADMIN_API_KEY" \
+            --max-time 30)
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Modelo recargado exitosamente"
+            echo "$BODY" | python -m json.tool || echo "$BODY"
+          else
+            echo "❌ Error recargando modelo (HTTP $HTTP_CODE)"
+            echo "$BODY"
+            # No fallar el workflow, solo advertir
+          fi
       
       # ======================================================================
       # SUMMARY

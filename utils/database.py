@@ -33,17 +33,11 @@ logger = logging.getLogger(__name__)
 
 # Variables de entorno (más seguro que hardcodear)
 # ⚠️ IMPORTANTE: En producción, usa variables de entorno, no hardcodees la key
-SUPABASE_URL = os.getenv(
-    "SUPABASE_URL", 
-    "https://hnvjgvigpjxxsjpbdmqk.supabase.co"
-)
-SUPABASE_KEY = os.getenv(
-    "SUPABASE_KEY",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhudmpndmlncGp4eHNqcGJkbXFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MTg2MDYsImV4cCI6MjA3ODA5NDYwNn0.PZNGkAAkB508f3gAsaf8c8Kyj8Xg8Hj5-xFXCWIfxD8"
-)
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-if not SUPABASE_KEY or SUPABASE_KEY == "":
-    logger.warning("⚠️  SUPABASE_KEY no configurada. Configura la variable de entorno SUPABASE_KEY")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    logger.warning("SUPABASE_URL o SUPABASE_KEY no configuradas. Base de datos no disponible.")
 
 # Nombre de la tabla
 TABLE_NAME = "tickets_fiducia"

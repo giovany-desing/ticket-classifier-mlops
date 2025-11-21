@@ -18,3 +18,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 # Configurar DVC (si es necesario)
 # RUN dvc remote add -d s3remote s3://tu-bucket/dvc-storage || true
 
+
+
+
+

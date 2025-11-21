@@ -74,6 +74,51 @@ monitoring:
   min_improvement_for_deploy: 0.01  # Mejora mínima (1%) para hacer deploy del nuevo modelo
 
 # -------------------
+# Thresholds y configuración avanzada
+# -------------------
+thresholds:
+  # Drift detection
+  drift_score_threshold: 0.5
+  ks_test_threshold: 0.05
+  chi2_test_threshold: 0.05
+  vocab_growth_threshold: 1.2
+  
+  # Performance
+  f1_score_minimum: 0.85
+  performance_drop_threshold: 0.05
+  min_improvement_for_deploy: 0.01
+  
+  # Confidence
+  low_confidence_threshold: 0.6
+  low_confidence_ratio_max: 0.3
+  
+  # Data requirements
+  min_samples_training: 100
+  min_predictions_for_drift: 50
+  min_labeled_predictions: 50
+  
+  # Retention
+  metrics_retention_days: 30
+  backup_retention_count: 5
+
+# Training configuration
+training:
+  test_size: 0.2
+  random_seed: 42
+  n_trials_default: 20
+  n_trials_ci: 10
+  cv_folds_default: 3
+  cv_folds_ci: 2
+  max_features: 5000
+
+# Timeouts (segundos)
+timeouts:
+  api_health_check: 5
+  api_drift_check: 10
+  training_max: 3600
+  dvc_operation: 300
+
+# -------------------
 # Configuración de API
 # -------------------
 api:
@@ -86,7 +131,7 @@ api:
 # -------------------
 database:
   # Configurar via variables de entorno:
-  #SUPABASE_URL= "https://hnvjgvigpjxxsjpbdmqk.supabase.co"
-  # SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhudmpndmlncGp4eHNqcGJkbXFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MTg2MDYsImV4cCI6MjA3ODA5NDYwNn0.PZNGkAAkB508f3gAsaf8c8Kyj8Xg8Hj5-xFXCWIfxD8"
+  # SUPABASE_URL: URL de tu proyecto Supabase
+  # SUPABASE_KEY: API key de Supabase (anon key)
   table_name: "tickets_fiducia"
   auto_update: true  # Actualizar BD automáticamente al predecir

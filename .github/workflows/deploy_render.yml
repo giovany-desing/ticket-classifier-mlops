@@ -1,0 +1,173 @@
+name: 🚀 Deploy to Render
+
+on:
+  # Este workflow ahora se ejecuta como parte de ci_cd_pipeline.yml
+  # Mantener para ejecución manual
+  workflow_dispatch:
+    inputs:
+      description:
+        description: 'Descripción del deploy'
+        required: false
+        default: 'Deploy manual'
+
+# Control de concurrencia - evita deploys simultáneos
+concurrency:
+  group: deploy-render
+  cancel-in-progress: false
+
+env:
+  RENDER_SERVICE_NAME: ticket-classifier-api
+
+jobs:
+  deploy:
+    name: 🚀 Deploy API to Render
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # ======================================================================
+      # PRE-DEPLOY CHECKS
+      # ======================================================================
+
+      - name: 🔍 Verify required files exist
+        run: |
+          echo "Verificando archivos requeridos..."
+
+          # Verificar archivos críticos
+          for file in "api/inference.py" "requirements.txt" "config.yaml"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ Archivo faltante: $file"
+              exit 1
+            fi
+            echo "✅ $file existe"
+          done
+
+          echo ""
+          echo "✅ Todos los archivos requeridos están presentes"
+
+      - name: 🐍 Setup Python (for validation)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: 🔍 Validate Python syntax
+        run: |
+          echo "Validando sintaxis de Python..."
+          python -m py_compile api/inference.py
+          python -m py_compile utils/monitoring.py
+          python -m py_compile utils/database.py
+          echo "✅ Sintaxis válida"
+
+      # ======================================================================
+      # DEPLOY TO RENDER
+      # ======================================================================
+
+      - name: 🚀 Trigger Render Deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "❌ RENDER_DEPLOY_HOOK_URL no está configurado en secrets"
+            echo ""
+            echo "📋 Para configurarlo:"
+            echo "1. Ve a Render Dashboard → tu servicio → Settings → Deploy Hook"
+            echo "2. Copia la URL del Deploy Hook"
+            echo "3. En GitHub → Settings → Secrets → Actions → New secret"
+            echo "4. Nombre: RENDER_DEPLOY_HOOK_URL"
+            echo "5. Valor: la URL copiada de Render"
+            exit 1
+          fi
+
+          echo "🚀 Disparando deploy en Render..."
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+            echo "✅ Deploy disparado exitosamente"
+            echo "📋 Respuesta: $BODY"
+          else
+            echo "❌ Error disparando deploy (HTTP $HTTP_CODE)"
+            echo "📋 Respuesta: $BODY"
+            exit 1
+          fi
+
+      # ======================================================================
+      # WAIT FOR DEPLOY (OPTIONAL - puede tardar)
+      # ======================================================================
+
+      - name: ⏳ Wait for deploy to start
+        run: |
+          echo "Esperando 30 segundos para que inicie el deploy..."
+          sleep 30
+
+      - name: 🔍 Health check (post-deploy)
+        env:
+          API_URL: ${{ secrets.API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "⚠️ API_URL no configurada, saltando health check"
+            echo "💡 Configura API_URL en secrets para verificar el deploy"
+            exit 0
+          fi
+
+          echo "🔍 Verificando health de la API..."
+
+          # Intentar hasta 5 veces con espera entre intentos
+          MAX_ATTEMPTS=5
+          ATTEMPT=1
+
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Intento $ATTEMPT de $MAX_ATTEMPTS..."
+
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              "$API_URL/health" \
+              --max-time 10)
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ API respondiendo correctamente"
+              exit 0
+            fi
+
+            echo "⏳ API no disponible (HTTP $HTTP_CODE), esperando 30s..."
+            sleep 30
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
+          echo "⚠️ API no respondió después de $MAX_ATTEMPTS intentos"
+          echo "💡 El deploy puede seguir en progreso. Verifica en Render Dashboard."
+          # No fallar el workflow, solo advertir
+
+      # ======================================================================
+      # SUMMARY
+      # ======================================================================
+
+      - name: 📋 Generate summary
+        if: always()
+        env:
+          API_URL: ${{ secrets.API_URL }}
+        run: |
+          echo "# 🚀 Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ env.RENDER_SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "$API_URL" ]; then
+            echo "## 🔗 Links" >> $GITHUB_STEP_SUMMARY
+            echo "- **API URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
+            echo "- **Health Check:** $API_URL/health" >> $GITHUB_STEP_SUMMARY
+            echo "- **Docs:** $API_URL/docs" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Verify deployment in [Render Dashboard](https://dashboard.render.com)" >> $GITHUB_STEP_SUMMARY
+          echo "2. Check API health: \`curl $API_URL/health\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. Test prediction endpoint" >> $GITHUB_STEP_SUMMARY

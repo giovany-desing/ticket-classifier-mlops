@@ -299,3 +299,7 @@ Edita `docker-compose.yml` para agregar certificados SSL.
 - [ ] Credenciales AWS configuradas
 - [ ] Primer DAG ejecutado exitosamente
 
+
+
+
+

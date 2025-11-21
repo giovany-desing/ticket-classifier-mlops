@@ -22,7 +22,8 @@ import json
 import pandas as pd
 import numpy as np
 import joblib
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -59,14 +60,58 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS
+# CORS - Configurar orígenes permitidos desde variable de entorno
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8080").split(",")
+ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
+
+# ============================================================================
+# AUTENTICACIÓN API
+# ============================================================================
+
+# Configuración de API Key
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+# Keys desde variables de entorno
+API_KEY = os.getenv("API_KEY")
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+
+async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
+    """Verifica API key para endpoints normales"""
+    if not API_KEY:
+        # Si no hay API_KEY configurada, permitir acceso (desarrollo)
+        return "development"
+
+    if api_key == API_KEY:
+        return "user"
+
+    raise HTTPException(
+        status_code=401,
+        detail="API Key inválida o no proporcionada",
+        headers={"WWW-Authenticate": "ApiKey"},
+    )
+
+async def verify_admin_key(api_key: str = Security(api_key_header)) -> str:
+    """Verifica API key para endpoints administrativos"""
+    if not ADMIN_API_KEY:
+        raise HTTPException(status_code=500, detail="ADMIN_API_KEY no configurada")
+
+    if api_key == ADMIN_API_KEY:
+        return "admin"
+
+    raise HTTPException(
+        status_code=401,
+        detail="Se requiere API Key de administrador",
+        headers={"WWW-Authenticate": "ApiKey"},
+    )
 
 # ============================================================================
 # CARGA DE MODELO Y RECURSOS
@@ -140,13 +185,28 @@ async def startup_event():
 
 class TicketPredictionRequest(BaseModel):
     """Request para predicción de ticket individual con BD"""
-    ticket_id: str = Field(..., description="ID del ticket (debe coincidir con columna 'number' en BD)")
-    short_description: str = Field(..., description="Descripción corta del ticket")
-    close_notes: Optional[str] = Field(None, description="Notas de cierre del ticket")
+    ticket_id: str = Field(
+        ...,
+        description="ID del ticket (debe coincidir con columna 'number' en BD)",
+        min_length=1,
+        max_length=100
+    )
+    short_description: str = Field(
+        ...,
+        description="Descripción corta del ticket",
+        min_length=1,
+        max_length=10000
+    )
+    close_notes: Optional[str] = Field(None, description="Notas de cierre del ticket", max_length=50000)
 
 class BatchTicketPredictionRequest(BaseModel):
     """Request para predicción en batch con BD"""
-    tickets: List[TicketPredictionRequest] = Field(..., description="Lista de tickets a predecir y actualizar en BD")
+    tickets: List[TicketPredictionRequest] = Field(
+        ...,
+        description="Lista de tickets a predecir y actualizar en BD",
+        min_items=1,
+        max_items=100
+    )
 
 class UpdateDBRequest(BaseModel):
     """Request para actualizar ticket en BD"""
@@ -157,9 +217,14 @@ class UpdateDBRequest(BaseModel):
 # Modelos legacy (mantener para compatibilidad)
 class PredictionRequest(BaseModel):
     """Request para predicción individual (sin BD)"""
-    short_description: str = Field(..., description="Descripción corta del ticket")
-    close_notes: Optional[str] = Field(None, description="Notas de cierre del ticket")
-    true_label: Optional[str] = Field(None, description="Label verdadero (para evaluación)")
+    short_description: str = Field(
+        ...,
+        description="Descripción corta del ticket",
+        min_length=1,
+        max_length=10000
+    )
+    close_notes: Optional[str] = Field(None, description="Notas de cierre del ticket", max_length=50000)
+    true_label: Optional[str] = Field(None, description="Label verdadero (para evaluación)", max_length=100)
 
 class BatchPredictionRequest(BaseModel):
     """Request para predicción en batch (sin BD)"""
@@ -196,7 +261,11 @@ async def health():
     }
 
 @app.post("/predict", response_model=PredictionResponse)
-async def predict(request: PredictionRequest, background_tasks: BackgroundTasks):
+async def predict(
+    request: PredictionRequest,
+    background_tasks: BackgroundTasks,
+    api_key: str = Depends(verify_api_key)
+):
     """
     Predice la clase de un ticket individual.
     """
@@ -253,7 +322,11 @@ async def predict(request: PredictionRequest, background_tasks: BackgroundTasks)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict/ticket")
-async def predict_ticket(request: TicketPredictionRequest, background_tasks: BackgroundTasks):
+async def predict_ticket(
+    request: TicketPredictionRequest,
+    background_tasks: BackgroundTasks,
+    api_key: str = Depends(verify_api_key)
+):
     """
     Predice un ticket individual y actualiza automáticamente en la BD.
     
@@ -326,7 +399,11 @@ async def predict_ticket(request: TicketPredictionRequest, background_tasks: Bac
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict/tickets/batch")
-async def predict_tickets_batch(request: BatchTicketPredictionRequest, background_tasks: BackgroundTasks):
+async def predict_tickets_batch(
+    request: BatchTicketPredictionRequest,
+    background_tasks: BackgroundTasks,
+    api_key: str = Depends(verify_api_key)
+):
     """
     Predice múltiples tickets en batch y actualiza automáticamente en la BD.
     
@@ -432,7 +509,10 @@ async def predict_tickets_batch(request: BatchTicketPredictionRequest, backgroun
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict/batch")
-async def predict_batch(request: BatchPredictionRequest):
+async def predict_batch(
+    request: BatchPredictionRequest,
+    api_key: str = Depends(verify_api_key)
+):
     """
     Predice múltiples tickets en batch (sin actualizar BD - legacy endpoint).
     """
@@ -835,7 +915,10 @@ async def db_health():
         }
 
 @app.get("/db/tickets/pending")
-async def get_pending_tickets(limit: int = 100):
+async def get_pending_tickets(
+    limit: int = 100,
+    api_key: str = Depends(verify_api_key)
+):
     """
     Obtiene tickets pendientes de predicción.
     """
@@ -849,7 +932,97 @@ async def get_pending_tickets(limit: int = 100):
         logger.error(f"Error obteniendo tickets pendientes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ============================================================================
+# ENDPOINTS ADMINISTRATIVOS
+# ============================================================================
+
+@app.post("/admin/reload-model")
+async def reload_model(api_key: str = Depends(verify_admin_key)):
+    """
+    Recarga el modelo en memoria sin reiniciar la API.
+    Requiere ADMIN_API_KEY.
+
+    Uso:
+        curl -X POST http://localhost:8000/admin/reload-model \
+             -H "X-API-Key: tu_admin_api_key"
+    """
+    global MODEL, MODEL_METADATA, DRIFT_DETECTOR, REFERENCE_DATA
+
+    try:
+        # Verificar que el modelo existe
+        if not MODEL_PATH.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Modelo no encontrado en {MODEL_PATH}"
+            )
+
+        # Guardar referencia al modelo anterior (para rollback si falla)
+        old_model = MODEL
+        old_metadata = MODEL_METADATA
+
+        # Cargar nuevo modelo
+        logger.info("Recargando modelo...")
+        new_model = joblib.load(MODEL_PATH)
+
+        # Cargar nueva metadata
+        new_metadata = None
+        if MODEL_METADATA_PATH.exists():
+            with open(MODEL_METADATA_PATH, 'r') as f:
+                new_metadata = json.load(f)
+
+        # Verificar que el modelo funciona con una predicción de prueba
+        test_text = "prueba de predicción"
+        try:
+            _ = new_model.predict([test_text])
+        except Exception as e:
+            logger.error(f"Nuevo modelo falló en prueba: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Nuevo modelo falló validación: {str(e)}"
+            )
+
+        # Actualizar variables globales
+        MODEL = new_model
+        MODEL_METADATA = new_metadata
+
+        # Recargar DriftDetector si hay datos de referencia
+        if REFERENCE_DATA is not None:
+            DRIFT_DETECTOR = DriftDetector(REFERENCE_DATA)
+
+        logger.info(f"Modelo recargado exitosamente: {new_metadata.get('model_name') if new_metadata else 'unknown'}")
+
+        return {
+            "status": "success",
+            "message": "Modelo recargado exitosamente",
+            "model_name": new_metadata.get("model_name") if new_metadata else None,
+            "f1_score": new_metadata.get("f1_score") if new_metadata else None,
+            "reloaded_at": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error recargando modelo: {e}")
+        raise HTTPException(status_code=500, detail=f"Error recargando modelo: {str(e)}")
+
+
+@app.get("/admin/model-info")
+async def get_model_info(api_key: str = Depends(verify_admin_key)):
+    """Obtiene información del modelo actualmente cargado"""
+    return {
+        "model_loaded": MODEL is not None,
+        "model_path": str(MODEL_PATH),
+        "metadata": MODEL_METADATA,
+        "drift_detector_ready": DRIFT_DETECTOR is not None,
+        "model_file_exists": MODEL_PATH.exists(),
+        "model_file_modified": datetime.fromtimestamp(
+            MODEL_PATH.stat().st_mtime
+        ).isoformat() if MODEL_PATH.exists() else None
+    }
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Render.com usa la variable PORT, si no existe usa 8000 por defecto
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
 

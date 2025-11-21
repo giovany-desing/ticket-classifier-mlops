@@ -1,17 +1,3 @@
-"""
-Script de monitoreo y reentrenamiento automático.
-
-Este script:
-1. Verifica métricas del modelo en producción
-2. Detecta drift (data drift y concept drift)
-3. Si detecta problemas, dispara reentrenamiento automático
-4. Evalúa el nuevo modelo vs el actual
-5. Hace deploy automático si el nuevo modelo es mejor
-
-Autor: Sistema MLOps
-Fecha: 2024
-"""
-
 import os
 import sys
 import json
@@ -107,14 +93,21 @@ def evaluate_model_performance() -> Optional[Dict[str, Any]]:
         predictions = []
         
         with open(logger_path, 'r', encoding='utf-8') as f:
-            for line in f:
+            for line_number, line in enumerate(f, 1):
                 try:
                     entry = json.loads(line)
                     if entry.get('true_label') and entry.get('timestamp'):
                         entry_time = datetime.fromisoformat(entry['timestamp'])
                         if entry_time >= cutoff_time:
                             predictions.append(entry)
-                except:
+                except json.JSONDecodeError as e:
+                    logger.warning(f"JSON inválido en línea {line_number}: {e}")
+                    continue
+                except (KeyError, ValueError) as e:
+                    logger.warning(f"Datos inválidos en línea {line_number}: {e}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Error inesperado en línea {line_number}: {e}")
                     continue
         
         if len(predictions) < 50:  # Mínimo de predicciones etiquetadas

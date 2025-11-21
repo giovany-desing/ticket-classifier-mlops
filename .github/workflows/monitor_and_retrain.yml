@@ -16,6 +16,11 @@ on:
           - 'true'
           - 'false'
 
+# Control de concurrencia
+concurrency:
+  group: monitoring-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   PYTHON_VERSION: '3.9'
   AWS_REGION: us-east-1
@@ -71,9 +76,25 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
         run: |
-          echo "📥 Downloading dataset and model..."
-          dvc pull data-tickets-train/dataset_tickets.csv.dvc || true
-          dvc pull models/best_model.pkl.dvc || true
+          echo "📥 Descargando dataset..."
+          if ! dvc pull data-tickets-train/dataset_tickets.csv.dvc; then
+            echo "⚠️ No se pudo descargar dataset, verificando si existe localmente..."
+            if [ ! -f "data-tickets-train/dataset_tickets.csv" ]; then
+              echo "❌ Dataset no disponible ni local ni remotamente"
+              exit 1
+            fi
+          fi
+          
+          echo "📥 Descargando modelo..."
+          if ! dvc pull models/best_model.pkl.dvc; then
+            echo "⚠️ No se pudo descargar modelo, verificando si existe localmente..."
+            if [ ! -f "models/best_model.pkl" ]; then
+              echo "❌ Modelo no disponible - se requiere entrenamiento inicial"
+              # No fallar si es primera vez
+            fi
+          fi
+          
+          echo "✅ DVC pull completado"
           ls -lh data-tickets-train/ models/
       
       # ======================================================================
@@ -116,6 +137,40 @@ jobs:
             echo "✅ Modelo versionado en S3"
           else
             echo "⚠️ No hay modelo nuevo para pushear"
+          fi
+      
+      # ======================================================================
+      # HOT RELOAD API MODEL
+      # ======================================================================
+      
+      - name: 🔄 Hot reload API model
+        if: success()
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+        run: |
+          if [ -z "$API_URL" ] || [ -z "$ADMIN_API_KEY" ]; then
+            echo "⚠️ API_URL o ADMIN_API_KEY no configuradas, saltando hot reload"
+            exit 0
+          fi
+          
+          echo "🔄 Recargando modelo en API..."
+          
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "$API_URL/admin/reload-model" \
+            -H "X-API-Key: $ADMIN_API_KEY" \
+            --max-time 30)
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Modelo recargado exitosamente"
+            echo "$BODY" | python -m json.tool || echo "$BODY"
+          else
+            echo "❌ Error recargando modelo (HTTP $HTTP_CODE)"
+            echo "$BODY"
+            # No fallar el workflow, solo advertir
           fi
       
       # ======================================================================

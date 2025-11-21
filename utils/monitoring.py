@@ -263,13 +263,20 @@ class PredictionLogger:
         
         predictions = []
         with open(self.predictions_file, 'r', encoding='utf-8') as f:
-            for line in f:
+            for line_number, line in enumerate(f, 1):
                 try:
                     entry = json.loads(line)
                     entry_time = datetime.fromisoformat(entry['timestamp'])
                     if entry_time >= cutoff_time:
                         predictions.append(entry)
-                except:
+                except json.JSONDecodeError as e:
+                    logger.warning(f"JSON inválido en línea {line_number}: {e}")
+                    continue
+                except (KeyError, ValueError) as e:
+                    logger.warning(f"Datos inválidos en línea {line_number}: {e}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Error inesperado en línea {line_number}: {e}")
                     continue
         
         if not predictions:
