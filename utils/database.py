@@ -138,13 +138,27 @@ def update_ticket_causa(
     """
     logger.info(f"Actualizando causa para ticket: {ticket_number}")
     
+    # Verificar credenciales antes de intentar conectar
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        error_msg = "SUPABASE_URL o SUPABASE_KEY no configuradas en variables de entorno"
+        logger.error(f"❌ {error_msg}")
+        return {
+            'success': False,
+            'error': error_msg,
+            'ticket_number': ticket_number,
+            'suggestion': 'Configura SUPABASE_URL y SUPABASE_KEY en las variables de entorno de Render'
+        }
+    
     try:
         client = get_supabase_client()
         if not client:
+            error_msg = 'No se pudo crear cliente de Supabase. Verifica credenciales.'
+            logger.error(f"❌ {error_msg}")
             return {
                 'success': False,
-                'error': 'No se pudo conectar a Supabase',
-                'ticket_number': ticket_number
+                'error': error_msg,
+                'ticket_number': ticket_number,
+                'suggestion': 'Verifica que SUPABASE_URL y SUPABASE_KEY sean correctas'
             }
         
         # Preparar datos de actualización
@@ -162,11 +176,13 @@ def update_ticket_causa(
             update_data["prediction_metadata"] = metadata
         
         # Ejecutar UPDATE
+        logger.info(f"Ejecutando UPDATE en tabla {TABLE_NAME} para ticket number='{ticket_number}'")
         response = client.table(TABLE_NAME).update(update_data).eq("number", ticket_number).execute()
         
         # Verificar si se actualizó algún registro
         if response.data and len(response.data) > 0:
-            logger.info(f"✓ Ticket {ticket_number} actualizado exitosamente")
+            logger.info(f"✅ Ticket {ticket_number} actualizado exitosamente en BD")
+            logger.debug(f"Datos actualizados: {response.data[0]}")
             return {
                 'success': True,
                 'message': f'Causa actualizada para ticket {ticket_number}',
@@ -176,11 +192,22 @@ def update_ticket_causa(
                 'data': response.data[0]
             }
         else:
-            logger.warning(f"⚠️  Ticket {ticket_number} no encontrado")
+            logger.warning(f"⚠️  Ticket {ticket_number} no encontrado en la tabla {TABLE_NAME}")
+            logger.warning(f"   Verifica que el ticket_id '{ticket_number}' coincida con la columna 'number' en la BD")
+            
+            # Intentar verificar si el ticket existe con otro formato
+            try:
+                check_response = client.table(TABLE_NAME).select("number").eq("number", ticket_number).limit(1).execute()
+                if not check_response.data or len(check_response.data) == 0:
+                    logger.warning(f"   No existe ningún registro con number='{ticket_number}' en la BD")
+            except Exception as e:
+                logger.debug(f"   No se pudo verificar existencia del ticket: {e}")
+            
             return {
                 'success': False,
-                'error': f'Ticket {ticket_number} no encontrado',
-                'ticket_number': ticket_number
+                'error': f'Ticket {ticket_number} no encontrado en la base de datos',
+                'ticket_number': ticket_number,
+                'suggestion': f'Verifica que el ticket_id "{ticket_number}" coincida exactamente con la columna "number" en la tabla {TABLE_NAME}'
             }
         
     except Exception as e:

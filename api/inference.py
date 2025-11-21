@@ -366,6 +366,7 @@ async def predict_ticket(
             max_proba = 1.0
         
         # Actualizar en BD (ticket_id se mapea a columna 'number')
+        logger.info(f"Intentando actualizar ticket {request.ticket_id} en base de datos...")
         update_result = update_ticket_causa(
             ticket_number=request.ticket_id,  # ticket_id del JSON → columna 'number' en BD
             causa=str(prediction),
@@ -376,6 +377,12 @@ async def predict_ticket(
                 'model_name': MODEL_METADATA.get('model_name') if MODEL_METADATA else None
             }
         )
+        
+        # Log del resultado de la actualización
+        if update_result.get('success'):
+            logger.info(f"✅ Ticket {request.ticket_id} actualizado exitosamente en BD")
+        else:
+            logger.error(f"❌ Error actualizando ticket {request.ticket_id}: {update_result.get('error', 'Error desconocido')}")
         
         # Log en background
         background_tasks.add_task(
@@ -905,16 +912,82 @@ async def db_health():
     Verifica la conexión a la base de datos.
     """
     try:
-        is_connected = verify_db_connection()
-        return {
-            "database_connected": is_connected,
-            "status": "healthy" if is_connected else "unhealthy"
+        # Verificar variables de entorno
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        
+        env_status = {
+            "SUPABASE_URL": "configured" if supabase_url else "missing",
+            "SUPABASE_KEY": "configured" if supabase_key else "missing"
         }
+        
+        # Verificar conexión
+        is_connected = verify_db_connection()
+        
+        result = {
+            "database_connected": is_connected,
+            "status": "healthy" if is_connected else "unhealthy",
+            "environment_variables": env_status,
+            "table_name": "tickets_fiducia"
+        }
+        
+        if not is_connected:
+            if not supabase_url or not supabase_key:
+                result["error"] = "Variables de entorno SUPABASE_URL o SUPABASE_KEY no configuradas"
+                result["suggestion"] = "Configura estas variables en Render Dashboard → Environment"
+            else:
+                result["error"] = "No se pudo conectar a Supabase. Verifica las credenciales."
+        
+        return result
     except Exception as e:
+        logger.error(f"Error verificando salud de BD: {e}")
         return {
             "database_connected": False,
             "status": "error",
             "error": str(e)
+        }
+
+@app.get("/db/test-update/{ticket_number}")
+async def test_db_update(
+    ticket_number: str,
+    api_key: str = Depends(verify_admin_key)
+):
+    """
+    Endpoint de prueba para verificar actualización en BD.
+    Requiere ADMIN_API_KEY.
+    """
+    try:
+        logger.info(f"Test: Intentando actualizar ticket {ticket_number}")
+        
+        # Verificar conexión primero
+        if not verify_db_connection():
+            return {
+                "success": False,
+                "error": "No se pudo conectar a Supabase",
+                "ticket_number": ticket_number,
+                "suggestion": "Verifica SUPABASE_URL y SUPABASE_KEY en variables de entorno"
+            }
+        
+        # Intentar actualización de prueba
+        test_result = update_ticket_causa(
+            ticket_number=ticket_number,
+            causa="TEST",
+            confidence=0.99,
+            metadata={"test": True, "timestamp": datetime.now().isoformat()}
+        )
+        
+        return {
+            "test": True,
+            "ticket_number": ticket_number,
+            "result": test_result,
+            "message": "Revisa el campo 'result' para ver el estado de la actualización"
+        }
+    except Exception as e:
+        logger.error(f"Error en test de actualización: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "ticket_number": ticket_number
         }
 
 @app.get("/db/tickets/pending")

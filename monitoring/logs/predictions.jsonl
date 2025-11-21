@@ -10,3 +10,5 @@
 {"timestamp": "2025-11-20T21:07:14.030338", "text": "error generacin otp usuari pued complet vinculacin", "prediction": "2", "probability": 0.999973125851996, "true_label": null, "correct": null}
 {"timestamp": "2025-11-20T21:07:14.031684", "text": "servidor lent servidor lent", "prediction": "2", "probability": 0.999926036664561, "true_label": null, "correct": null}
 {"timestamp": "2025-11-20T21:07:14.032112", "text": "error conexin pued conect bas dat", "prediction": "2", "probability": 0.9999554818920018, "true_label": null, "correct": null}
+{"timestamp": "2025-11-21T16:46:43.538084", "text": "error inici sesin sistem resete contrase usuari", "prediction": "2", "probability": 0.9999843376185775, "true_label": null, "correct": null}
+{"timestamp": "2025-11-21T16:46:53.941059", "text": "error inici sesin sistem resete contrase usuari", "prediction": "2", "probability": 0.9999843376185775, "true_label": null, "correct": null}
