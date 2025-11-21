@@ -306,3 +306,14 @@ jobs:
             echo "2. Check API health: curl $API_URL/health" >> $GITHUB_STEP_SUMMARY
           fi
           echo "3. Test prediction endpoint" >> $GITHUB_STEP_SUMMARY
+
+
+
+
+
+
+
+
+
+
+
