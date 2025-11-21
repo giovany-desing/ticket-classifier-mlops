@@ -171,16 +171,74 @@ def load_model():
         logger.error(f"Error cargando modelo: {e}")
         raise
 
+# Descargar modelo desde S3 si no existe
+def download_model_from_s3():
+    """Intenta descargar el modelo desde S3 usando DVC si no existe localmente"""
+    if MODEL_PATH.exists():
+        logger.info(f"Modelo ya existe: {MODEL_PATH}")
+        return True
+
+    logger.info("Modelo no encontrado localmente, intentando descargar desde S3...")
+
+    try:
+        import subprocess
+        import os
+
+        # Verificar credenciales AWS
+        if not os.getenv("AWS_ACCESS_KEY_ID") or not os.getenv("AWS_SECRET_ACCESS_KEY"):
+            logger.warning("Credenciales AWS no configuradas, no se puede descargar modelo")
+            return False
+
+        # Crear directorio models si no existe
+        MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+        # Intentar dvc pull
+        dvc_file = MODEL_PATH.parent / "best_model.pkl.dvc"
+        if dvc_file.exists():
+            logger.info(f"Ejecutando dvc pull {dvc_file}...")
+            result = subprocess.run(
+                ["dvc", "pull", str(dvc_file)],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                env=os.environ.copy()
+            )
+
+            if result.returncode == 0 and MODEL_PATH.exists():
+                logger.info(f"Modelo descargado exitosamente: {MODEL_PATH}")
+                return True
+            else:
+                logger.error(f"Error en dvc pull: {result.stderr}")
+                return False
+        else:
+            logger.warning(f"Archivo DVC no encontrado: {dvc_file}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        logger.error("Timeout descargando modelo (mas de 5 minutos)")
+        return False
+    except FileNotFoundError:
+        logger.warning("DVC no instalado, no se puede descargar modelo")
+        return False
+    except Exception as e:
+        logger.error(f"Error descargando modelo: {e}")
+        return False
+
 # Cargar modelo al iniciar
 @app.on_event("startup")
 async def startup_event():
+    # Intentar descargar modelo si no existe
+    download_model_from_s3()
+
+    # Cargar modelo
     load_model()
+
     # Inicializar base de datos (opcional, no bloquea si falla)
     try:
         initialize_database()
     except Exception as e:
         logger.warning(f"No se pudo inicializar base de datos: {e}")
-        logger.info("La API funcionará sin conexión a base de datos")
+        logger.info("La API funcionara sin conexion a base de datos")
 
 # ============================================================================
 # MODELOS PYDANTIC
