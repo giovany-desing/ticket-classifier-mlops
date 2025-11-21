@@ -53,3 +53,30 @@ preprocessing:
     - "cc"
   language: "spanish"
   apply_stemming: true
+
+# -------------------
+# Configuración de Monitoreo y MLOps
+# -------------------
+monitoring:
+  # Umbrales para detección de drift
+  drift_threshold: 0.05  # p-value para considerar drift
+  drift_score_threshold: 0.5  # Score de drift para trigger reentrenamiento
+  min_predictions_for_drift: 100  # Mínimo de predicciones para analizar drift
+  performance_drop_threshold: 0.05  # Caída de performance para trigger (5%)
+  
+  # Configuración de evaluación
+  min_labeled_predictions: 50  # Mínimo de predicciones etiquetadas para evaluación
+  evaluation_window_hours: 48  # Ventana de tiempo para evaluación
+  
+  # Configuración de reentrenamiento
+  retrain_on_drift: true  # Reentrenar automáticamente si hay drift
+  retrain_on_performance_drop: true  # Reentrenar si performance baja
+  min_improvement_for_deploy: 0.01  # Mejora mínima (1%) para hacer deploy del nuevo modelo
+
+# -------------------
+# Configuración de API
+# -------------------
+api:
+  host: "0.0.0.0"
+  port: 8000
+  log_dir: "monitoring/logs"

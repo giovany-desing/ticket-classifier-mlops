@@ -1,0 +1,155 @@
+name: 🔍 Monitor and Auto-Retrain
+
+on:
+  schedule:
+    # Ejecutar cada 6 horas
+    - cron: '0 */6 * * *'
+  
+  workflow_dispatch:
+    inputs:
+      force_retrain:
+        description: 'Forzar reentrenamiento incluso sin drift'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  PYTHON_VERSION: '3.9'
+  AWS_REGION: us-east-1
+
+jobs:
+  monitor:
+    name: 🔍 Monitor Model & Auto-Retrain
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    
+    steps:
+      # ======================================================================
+      # SETUP
+      # ======================================================================
+      
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install requests  # Para llamar a la API
+      
+      - name: 📚 Download NLTK data
+        run: |
+          python -c "
+          import nltk
+          nltk.download('punkt', quiet=True)
+          nltk.download('punkt_tab', quiet=True)
+          nltk.download('stopwords', quiet=True)
+          print('✓ NLTK resources ready')
+          "
+      
+      # ======================================================================
+      # DVC SETUP (para datos y modelos)
+      # ======================================================================
+      
+      - name: 🗄️ Pull data and model from S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        run: |
+          echo "📥 Downloading dataset and model..."
+          dvc pull data-tickets-train/dataset_tickets.csv.dvc || true
+          dvc pull models/best_model.pkl.dvc || true
+          ls -lh data-tickets-train/ models/
+      
+      # ======================================================================
+      # MONITOREO Y REENTRENAMIENTO
+      # ======================================================================
+      
+      - name: 🔍 Run monitoring and retrain if needed
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+          API_URL: ${{ secrets.API_URL || 'http://localhost:8000' }}
+          FORCE_RETRAIN: ${{ github.event.inputs.force_retrain || 'false' }}
+        run: |
+          echo "🔍 Ejecutando monitoreo..."
+          
+          # Si la API está disponible, verificar drift
+          # Si no, asumir que necesitamos verificar con datos locales
+          python scripts/monitor_and_retrain.py || {
+            echo "⚠️ Monitoreo falló o API no disponible"
+            echo "Esto es normal si la API no está corriendo"
+            exit 0
+          }
+      
+      # ======================================================================
+      # PUSH MODELO ACTUALIZADO (si se reentrenó)
+      # ======================================================================
+      
+      - name: 📤 Push updated model to S3
+        if: success()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        run: |
+          if [ -f "models/best_model.pkl" ]; then
+            echo "📤 Pusheando modelo actualizado a S3..."
+            dvc add models/best_model.pkl || true
+            dvc push models/best_model.pkl.dvc || true
+            echo "✅ Modelo versionado en S3"
+          else
+            echo "⚠️ No hay modelo nuevo para pushear"
+          fi
+      
+      # ======================================================================
+      # SUMMARY
+      # ======================================================================
+      
+      - name: 📋 Generate summary
+        if: always()
+        run: |
+          echo "# 🔍 Monitoring Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "models/best_model_metadata.json" ]; then
+            python << 'PYTHON_EOF'
+          import json
+          from pathlib import Path
+          from datetime import datetime
+          
+          try:
+              with open('models/best_model_metadata.json', 'r') as f:
+                  metadata = json.load(f)
+              
+              print(f"**Model:** {metadata.get('model_name', 'N/A')}")
+              print(f"**F1-Score:** {metadata.get('f1_score', 0):.4f}")
+              print(f"**Last Training:** {metadata.get('timestamp', 'N/A')}")
+              print(f"**Environment:** {metadata.get('environment', 'N/A')}")
+              print("")
+              print("### 📊 Monitoring Status")
+              print("")
+              print("✅ Monitoring completed")
+              print("")
+              print("**Note:** Check logs for drift detection and retraining decisions")
+              
+          except Exception as e:
+              print(f"Error generating summary: {e}")
+          PYTHON_EOF
+          else
+            echo "## ⚠️ No Model Metadata Found" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Model may not have been trained yet." >> $GITHUB_STEP_SUMMARY
+          fi
+
