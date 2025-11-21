@@ -173,52 +173,60 @@ def load_model():
 
 # Descargar modelo desde S3 si no existe
 def download_model_from_s3():
-    """Intenta descargar el modelo desde S3 usando DVC si no existe localmente"""
+    """Descarga el modelo desde S3 usando boto3 (mas robusto que DVC)"""
     if MODEL_PATH.exists():
         logger.info(f"Modelo ya existe: {MODEL_PATH}")
         return True
 
     logger.info("Modelo no encontrado localmente, intentando descargar desde S3...")
 
-    try:
-        import subprocess
-        import os
+    # Verificar credenciales AWS
+    aws_key = os.getenv("AWS_ACCESS_KEY_ID")
+    aws_secret = os.getenv("AWS_SECRET_ACCESS_KEY")
 
-        # Verificar credenciales AWS
-        if not os.getenv("AWS_ACCESS_KEY_ID") or not os.getenv("AWS_SECRET_ACCESS_KEY"):
-            logger.warning("Credenciales AWS no configuradas, no se puede descargar modelo")
-            return False
+    if not aws_key or not aws_secret:
+        logger.warning("Credenciales AWS no configuradas, no se puede descargar modelo")
+        return False
+
+    try:
+        import boto3
+        from botocore.exceptions import ClientError
+
+        # Configuracion S3 (basada en .dvc/config)
+        bucket = "ticketsfidudavivienda"
+        # DVC guarda archivos usando MD5: primeros 2 chars como directorio
+        # MD5 del modelo: 204e6d0e36a8d6658f0bde0039761267
+        s3_key = "dvc-storage/models/20/4e6d0e36a8d6658f0bde0039761267"
+
+        logger.info(f"Descargando desde s3://{bucket}/{s3_key}")
+
+        # Crear cliente S3
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=aws_key,
+            aws_secret_access_key=aws_secret,
+            region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+        )
 
         # Crear directorio models si no existe
         MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-        # Intentar dvc pull
-        dvc_file = MODEL_PATH.parent / "best_model.pkl.dvc"
-        if dvc_file.exists():
-            logger.info(f"Ejecutando dvc pull {dvc_file}...")
-            result = subprocess.run(
-                ["dvc", "pull", str(dvc_file)],
-                capture_output=True,
-                text=True,
-                timeout=300,
-                env=os.environ.copy()
-            )
+        # Descargar archivo
+        s3_client.download_file(bucket, s3_key, str(MODEL_PATH))
 
-            if result.returncode == 0 and MODEL_PATH.exists():
-                logger.info(f"Modelo descargado exitosamente: {MODEL_PATH}")
-                return True
-            else:
-                logger.error(f"Error en dvc pull: {result.stderr}")
-                return False
+        if MODEL_PATH.exists():
+            size_mb = MODEL_PATH.stat().st_size / (1024 * 1024)
+            logger.info(f"Modelo descargado exitosamente: {MODEL_PATH} ({size_mb:.2f} MB)")
+            return True
         else:
-            logger.warning(f"Archivo DVC no encontrado: {dvc_file}")
+            logger.error("Descarga completa pero archivo no encontrado")
             return False
 
-    except subprocess.TimeoutExpired:
-        logger.error("Timeout descargando modelo (mas de 5 minutos)")
+    except ImportError:
+        logger.error("boto3 no instalado. Agregalo a requirements.txt")
         return False
-    except FileNotFoundError:
-        logger.warning("DVC no instalado, no se puede descargar modelo")
+    except ClientError as e:
+        logger.error(f"Error de AWS S3: {e}")
         return False
     except Exception as e:
         logger.error(f"Error descargando modelo: {e}")
