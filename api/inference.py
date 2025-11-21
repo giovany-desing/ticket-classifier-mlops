@@ -128,11 +128,14 @@ DRIFT_DETECTOR = None
 def load_model():
     """Carga el modelo y recursos necesarios"""
     global MODEL, MODEL_METADATA, REFERENCE_DATA, DRIFT_DETECTOR
-    
+
     try:
         # Cargar modelo
         if not MODEL_PATH.exists():
-            raise FileNotFoundError(f"Modelo no encontrado en: {MODEL_PATH}")
+            logger.warning(f"Modelo no encontrado en: {MODEL_PATH}")
+            logger.warning("La API iniciara en modo degradado - endpoints de prediccion no disponibles")
+            logger.warning("Usa /admin/reload-model para cargar un modelo despues")
+            return  # No fallar, solo advertir
         
         MODEL = joblib.load(MODEL_PATH)
         logger.info(f"✓ Modelo cargado desde: {MODEL_PATH}")
