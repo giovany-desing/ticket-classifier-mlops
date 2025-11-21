@@ -1,0 +1,21 @@
+# Airflow core
+apache-airflow==2.7.0
+
+# Providers
+apache-airflow-providers-postgres==5.7.0
+apache-airflow-providers-http==4.5.0
+
+# Dependencias del proyecto MLOps
+requests>=2.31.0
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+joblib>=1.3.0
+
+# DVC (para versionamiento)
+dvc[s3]>=3.0.0
+
+# MLflow (opcional, si se usa)
+mlflow>=2.8.0
+

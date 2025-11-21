@@ -1,17 +1,3 @@
-"""
-Script de deploy automático del modelo.
-
-Este script:
-1. Valida que el nuevo modelo sea mejor que el actual
-2. Hace backup del modelo anterior
-3. Actualiza el modelo en producción
-4. Reinicia servicios si es necesario
-5. Notifica sobre el deploy
-
-Autor: Sistema MLOps
-Fecha: 2024
-"""
-
 import os
 import sys
 import json

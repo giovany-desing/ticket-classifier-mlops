@@ -1,16 +1,3 @@
-"""
-Sistema de monitoreo y detección de drift para el modelo de clasificación.
-
-Este módulo implementa:
-- Detección de Data Drift (cambios en distribución de datos de entrada)
-- Detección de Concept Drift (degradación de performance del modelo)
-- Almacenamiento de predicciones para análisis
-- Alertas cuando se detectan problemas
-
-Autor: Sistema MLOps
-Fecha: 2024
-"""
-
 import os
 import json
 import logging

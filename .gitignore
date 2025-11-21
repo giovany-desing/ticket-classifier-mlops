@@ -37,3 +37,32 @@ data/processed/*
 # Pero NO ignores los .dvc files
 !/models/*.dvc
 mlruns/
+
+# Python
+.python-version
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lock files (mantener requirements-lock.txt pero ignorar otros)
+# requirements-lock.txt se debe commitear para reproducibilidad

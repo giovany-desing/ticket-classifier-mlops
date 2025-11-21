@@ -80,3 +80,13 @@ api:
   host: "0.0.0.0"
   port: 8000
   log_dir: "monitoring/logs"
+
+# -------------------
+# Configuración de Base de Datos (Supabase)
+# -------------------
+database:
+  # Configurar via variables de entorno:
+  #SUPABASE_URL= "https://hnvjgvigpjxxsjpbdmqk.supabase.co"
+  # SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhudmpndmlncGp4eHNqcGJkbXFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MTg2MDYsImV4cCI6MjA3ODA5NDYwNn0.PZNGkAAkB508f3gAsaf8c8Kyj8Xg8Hj5-xFXCWIfxD8"
+  table_name: "tickets_fiducia"
+  auto_update: true  # Actualizar BD automáticamente al predecir

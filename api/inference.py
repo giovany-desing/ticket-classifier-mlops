@@ -33,6 +33,15 @@ sys.path.append(str(project_root))
 
 from utils.preprocessing_data import preprocess_text, load_config
 from utils.monitoring import PredictionLogger, DriftDetector
+from utils.database import (
+    update_ticket_causa,
+    update_tickets_batch,
+    get_tickets_pending_prediction,
+    get_ticket_by_number,
+    get_ticket_text_fields,
+    verify_connection as verify_db_connection,
+    initialize_database
+)
 
 # ============================================================================
 # CONFIGURACIÓN
@@ -118,19 +127,42 @@ def load_model():
 @app.on_event("startup")
 async def startup_event():
     load_model()
+    # Inicializar base de datos (opcional, no bloquea si falla)
+    try:
+        initialize_database()
+    except Exception as e:
+        logger.warning(f"No se pudo inicializar base de datos: {e}")
+        logger.info("La API funcionará sin conexión a base de datos")
 
 # ============================================================================
 # MODELOS PYDANTIC
 # ============================================================================
 
+class TicketPredictionRequest(BaseModel):
+    """Request para predicción de ticket individual con BD"""
+    ticket_id: str = Field(..., description="ID del ticket (debe coincidir con columna 'number' en BD)")
+    short_description: str = Field(..., description="Descripción corta del ticket")
+    close_notes: Optional[str] = Field(None, description="Notas de cierre del ticket")
+
+class BatchTicketPredictionRequest(BaseModel):
+    """Request para predicción en batch con BD"""
+    tickets: List[TicketPredictionRequest] = Field(..., description="Lista de tickets a predecir y actualizar en BD")
+
+class UpdateDBRequest(BaseModel):
+    """Request para actualizar ticket en BD"""
+    ticket_number: str = Field(..., description="Número del ticket en BD")
+    short_description: str = Field(..., description="Descripción corta del ticket")
+    close_notes: Optional[str] = Field(None, description="Notas de cierre del ticket")
+
+# Modelos legacy (mantener para compatibilidad)
 class PredictionRequest(BaseModel):
-    """Request para predicción individual"""
+    """Request para predicción individual (sin BD)"""
     short_description: str = Field(..., description="Descripción corta del ticket")
     close_notes: Optional[str] = Field(None, description="Notas de cierre del ticket")
     true_label: Optional[str] = Field(None, description="Label verdadero (para evaluación)")
 
 class BatchPredictionRequest(BaseModel):
-    """Request para predicción en batch"""
+    """Request para predicción en batch (sin BD)"""
     tickets: List[PredictionRequest] = Field(..., description="Lista de tickets a predecir")
 
 class PredictionResponse(BaseModel):
@@ -220,10 +252,189 @@ async def predict(request: PredictionRequest, background_tasks: BackgroundTasks)
         logger.error(f"Error en predicción: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/predict/ticket")
+async def predict_ticket(request: TicketPredictionRequest, background_tasks: BackgroundTasks):
+    """
+    Predice un ticket individual y actualiza automáticamente en la BD.
+    
+    El ticket_id del JSON debe coincidir con la columna 'number' en la BD.
+    """
+    if MODEL is None:
+        raise HTTPException(status_code=503, detail="Modelo no cargado")
+    
+    try:
+        # Preprocesar texto
+        clean_short = preprocess_text(request.short_description)
+        clean_close = preprocess_text(request.close_notes or "")
+        combined_text = clean_short + " " + clean_close
+        
+        if not combined_text.strip():
+            raise HTTPException(status_code=400, detail="Texto vacío después de preprocesamiento")
+        
+        # Predecir
+        prediction = MODEL.predict([combined_text])[0]
+        
+        # Obtener probabilidades
+        if hasattr(MODEL, 'predict_proba'):
+            probas = MODEL.predict_proba([combined_text])[0]
+            classes = MODEL.classes_ if hasattr(MODEL, 'classes_') else None
+            
+            if classes is not None:
+                proba_dict = {str(cls): float(prob) for cls, prob in zip(classes, probas)}
+                max_proba = float(np.max(probas))
+            else:
+                proba_dict = {str(prediction): 1.0}
+                max_proba = 1.0
+        else:
+            proba_dict = {str(prediction): 1.0}
+            max_proba = 1.0
+        
+        # Actualizar en BD (ticket_id se mapea a columna 'number')
+        update_result = update_ticket_causa(
+            ticket_number=request.ticket_id,  # ticket_id del JSON → columna 'number' en BD
+            causa=str(prediction),
+            confidence=max_proba,
+            metadata={
+                'probabilities': proba_dict,
+                'predicted_at': datetime.now().isoformat(),
+                'model_name': MODEL_METADATA.get('model_name') if MODEL_METADATA else None
+            }
+        )
+        
+        # Log en background
+        background_tasks.add_task(
+            PREDICTION_LOGGER.log_prediction,
+            text=combined_text,
+            prediction=str(prediction),
+            probability=max_proba,
+            true_label=None
+        )
+        
+        return {
+            "ticket_id": request.ticket_id,
+            "prediction": str(prediction),
+            "probability": max_proba,
+            "probabilities": proba_dict,
+            "database_update": update_result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en predicción de ticket: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/predict/tickets/batch")
+async def predict_tickets_batch(request: BatchTicketPredictionRequest, background_tasks: BackgroundTasks):
+    """
+    Predice múltiples tickets en batch y actualiza automáticamente en la BD.
+    
+    Cada ticket_id del JSON debe coincidir con la columna 'number' en la BD.
+    """
+    if MODEL is None:
+        raise HTTPException(status_code=503, detail="Modelo no cargado")
+    
+    try:
+        results = []
+        updates = []
+        
+        for ticket in request.tickets:
+            # Preprocesar texto
+            clean_short = preprocess_text(ticket.short_description)
+            clean_close = preprocess_text(ticket.close_notes or "")
+            combined_text = clean_short + " " + clean_close
+            
+            if not combined_text.strip():
+                results.append({
+                    "ticket_id": ticket.ticket_id,
+                    "status": "error",
+                    "error": "Texto vacío después de preprocesamiento",
+                    "prediction": None
+                })
+                continue
+            
+            # Predecir
+            prediction = MODEL.predict([combined_text])[0]
+            
+            # Obtener probabilidades
+            if hasattr(MODEL, 'predict_proba'):
+                probas = MODEL.predict_proba([combined_text])[0]
+                max_proba = float(np.max(probas))
+                classes = MODEL.classes_ if hasattr(MODEL, 'classes_') else None
+                if classes is not None:
+                    proba_dict = {str(cls): float(prob) for cls, prob in zip(classes, probas)}
+                else:
+                    proba_dict = {str(prediction): max_proba}
+            else:
+                max_proba = 1.0
+                proba_dict = {str(prediction): max_proba}
+            
+            # Agregar a resultados
+            results.append({
+                "ticket_id": ticket.ticket_id,
+                "prediction": str(prediction),
+                "probability": max_proba,
+                "probabilities": proba_dict,
+                "status": "success"
+            })
+            
+            # Agregar a updates para BD
+            updates.append({
+                'ticket_number': ticket.ticket_id,  # ticket_id → columna 'number' en BD
+                'causa': str(prediction),
+                'confidence': max_proba,
+                'metadata': {
+                    'probabilities': proba_dict,
+                    'processed_at': datetime.now().isoformat()
+                }
+            })
+            
+            # Log en background
+            background_tasks.add_task(
+                PREDICTION_LOGGER.log_prediction,
+                text=combined_text,
+                prediction=str(prediction),
+                probability=max_proba,
+                true_label=None
+            )
+        
+        # Actualizar en BD en batch
+        batch_result = None
+        if updates:
+            batch_result = update_tickets_batch(updates)
+            
+            # Agregar información de BD a resultados
+            success_tickets = {r['ticket_number']: r for r in batch_result['success']}
+            failed_tickets = {r['ticket_number']: r for r in batch_result['failed']}
+            
+            for result in results:
+                ticket_id = result['ticket_id']
+                if ticket_id in success_tickets:
+                    result['database_update'] = {'success': True}
+                elif ticket_id in failed_tickets:
+                    result['database_update'] = {'success': False, 'error': failed_tickets[ticket_id].get('error')}
+        
+        return {
+            "total": len(results),
+            "processed": len([r for r in results if r.get('status') == 'success']),
+            "failed": len([r for r in results if r.get('status') == 'error']),
+            "results": results,
+            "batch_update_summary": {
+                "success": len(batch_result['success']) if batch_result else 0,
+                "failed": len(batch_result['failed']) if batch_result else 0
+            } if batch_result else None,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error en batch prediction: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/predict/batch")
 async def predict_batch(request: BatchPredictionRequest):
     """
-    Predice múltiples tickets en batch.
+    Predice múltiples tickets en batch (sin actualizar BD - legacy endpoint).
     """
     if MODEL is None:
         raise HTTPException(status_code=503, detail="Modelo no cargado")
@@ -351,6 +562,291 @@ async def save_metrics():
         }
     except Exception as e:
         logger.error(f"Error guardando métricas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# ENDPOINTS DE BASE DE DATOS
+# ============================================================================
+
+@app.post("/predict/from-db/{ticket_number}")
+async def predict_from_db(ticket_number: str, background_tasks: BackgroundTasks):
+    """
+    Obtiene un ticket de la BD, predice su causa y la actualiza automáticamente.
+    """
+    if MODEL is None:
+        raise HTTPException(status_code=503, detail="Modelo no cargado")
+    
+    try:
+        # Obtener ticket de la BD
+        ticket = get_ticket_by_number(ticket_number)
+        
+        if not ticket:
+            raise HTTPException(status_code=404, detail=f"Ticket {ticket_number} no encontrado")
+        
+        # Extraer campos de texto
+        short_description, close_notes = get_ticket_text_fields(ticket)
+        
+        if not short_description and not close_notes:
+            raise HTTPException(status_code=400, detail="Ticket sin texto para predecir")
+        
+        # Preprocesar y predecir
+        clean_short = preprocess_text(short_description)
+        clean_close = preprocess_text(close_notes or "")
+        combined_text = clean_short + " " + clean_close
+        
+        if not combined_text.strip():
+            raise HTTPException(status_code=400, detail="Texto vacío después de preprocesamiento")
+        
+        # Predecir
+        prediction = MODEL.predict([combined_text])[0]
+        
+        # Obtener probabilidades
+        if hasattr(MODEL, 'predict_proba'):
+            probas = MODEL.predict_proba([combined_text])[0]
+            max_proba = float(np.max(probas))
+            classes = MODEL.classes_ if hasattr(MODEL, 'classes_') else None
+            if classes is not None:
+                proba_dict = {str(cls): float(prob) for cls, prob in zip(classes, probas)}
+            else:
+                proba_dict = {str(prediction): max_proba}
+        else:
+            max_proba = 1.0
+            proba_dict = {str(prediction): max_proba}
+        
+        # Actualizar en BD
+        update_result = update_ticket_causa(
+            ticket_number=ticket_number,
+            causa=str(prediction),
+            confidence=max_proba,
+            metadata={
+                'probabilities': proba_dict,
+                'predicted_at': datetime.now().isoformat(),
+                'model_name': MODEL_METADATA.get('model_name') if MODEL_METADATA else None
+            }
+        )
+        
+        # Log en background
+        background_tasks.add_task(
+            PREDICTION_LOGGER.log_prediction,
+            text=combined_text,
+            prediction=str(prediction),
+            probability=max_proba,
+            true_label=None
+        )
+        
+        return {
+            "ticket_number": ticket_number,
+            "prediction": str(prediction),
+            "probability": max_proba,
+            "probabilities": proba_dict,
+            "database_update": update_result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en predicción desde BD: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/predict/update-db")
+async def predict_and_update_db(
+    request: UpdateDBRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Predice y actualiza directamente en la BD (similar a actualizar_causa_ticket).
+    """
+    if MODEL is None:
+        raise HTTPException(status_code=503, detail="Modelo no cargado")
+    
+    try:
+        # Preprocesar y predecir
+        clean_short = preprocess_text(request.short_description)
+        clean_close = preprocess_text(request.close_notes or "")
+        combined_text = clean_short + " " + clean_close
+        
+        if not combined_text.strip():
+            raise HTTPException(status_code=400, detail="Texto vacío después de preprocesamiento")
+        
+        # Predecir
+        prediction = MODEL.predict([combined_text])[0]
+        
+        # Obtener probabilidades
+        if hasattr(MODEL, 'predict_proba'):
+            probas = MODEL.predict_proba([combined_text])[0]
+            max_proba = float(np.max(probas))
+        else:
+            max_proba = 1.0
+        
+        # Actualizar en BD
+        update_result = update_ticket_causa(
+            ticket_number=request.ticket_number,
+            causa=str(prediction),
+            confidence=max_proba
+        )
+        
+        # Log en background
+        background_tasks.add_task(
+            PREDICTION_LOGGER.log_prediction,
+            text=combined_text,
+            prediction=str(prediction),
+            probability=max_proba,
+            true_label=None
+        )
+        
+        return {
+            "success": update_result['success'],
+            "ticket_number": request.ticket_number,
+            "prediction": str(prediction),
+            "probability": max_proba,
+            "database_update": update_result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error en predict y update: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/predict/process-pending")
+async def process_pending_tickets(
+    limit: int = 100,
+    background_tasks: BackgroundTasks = None
+):
+    """
+    Procesa tickets pendientes de predicción desde la BD.
+    Obtiene tickets sin causa, predice y actualiza en batch.
+    """
+    if MODEL is None:
+        raise HTTPException(status_code=503, detail="Modelo no cargado")
+    
+    try:
+        # Obtener tickets pendientes
+        tickets = get_tickets_pending_prediction(limit=limit)
+        
+        if not tickets:
+            return {
+                "message": "No hay tickets pendientes",
+                "processed": 0,
+                "results": []
+            }
+        
+        # Procesar cada ticket
+        updates = []
+        results = []
+        
+        for ticket in tickets:
+            ticket_number = ticket.get('number')
+            if not ticket_number:
+                continue
+            
+            # Extraer texto
+            short_description, close_notes = get_ticket_text_fields(ticket)
+            
+            if not short_description and not close_notes:
+                results.append({
+                    "ticket_number": ticket_number,
+                    "status": "skipped",
+                    "reason": "Sin texto para predecir"
+                })
+                continue
+            
+            # Preprocesar y predecir
+            clean_short = preprocess_text(short_description)
+            clean_close = preprocess_text(close_notes or "")
+            combined_text = clean_short + " " + clean_close
+            
+            if not combined_text.strip():
+                results.append({
+                    "ticket_number": ticket_number,
+                    "status": "skipped",
+                    "reason": "Texto vacío después de preprocesamiento"
+                })
+                continue
+            
+            # Predecir
+            prediction = MODEL.predict([combined_text])[0]
+            
+            if hasattr(MODEL, 'predict_proba'):
+                probas = MODEL.predict_proba([combined_text])[0]
+                max_proba = float(np.max(probas))
+            else:
+                max_proba = 1.0
+            
+            # Agregar a updates
+            updates.append({
+                'ticket_number': ticket_number,
+                'causa': str(prediction),
+                'confidence': max_proba,
+                'metadata': {
+                    'processed_at': datetime.now().isoformat()
+                }
+            })
+            
+            # Log en background
+            if background_tasks:
+                background_tasks.add_task(
+                    PREDICTION_LOGGER.log_prediction,
+                    text=combined_text,
+                    prediction=str(prediction),
+                    probability=max_proba,
+                    true_label=None
+                )
+        
+        # Actualizar en batch
+        if updates:
+            batch_result = update_tickets_batch(updates)
+            
+            return {
+                "message": f"Procesados {len(updates)} tickets",
+                "total_pending": len(tickets),
+                "processed": len(batch_result['success']),
+                "failed": len(batch_result['failed']),
+                "results": batch_result
+            }
+        else:
+            return {
+                "message": "No se pudo procesar ningún ticket",
+                "total_pending": len(tickets),
+                "processed": 0,
+                "results": results
+            }
+        
+    except Exception as e:
+        logger.error(f"Error procesando tickets pendientes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/db/health")
+async def db_health():
+    """
+    Verifica la conexión a la base de datos.
+    """
+    try:
+        is_connected = verify_db_connection()
+        return {
+            "database_connected": is_connected,
+            "status": "healthy" if is_connected else "unhealthy"
+        }
+    except Exception as e:
+        return {
+            "database_connected": False,
+            "status": "error",
+            "error": str(e)
+        }
+
+@app.get("/db/tickets/pending")
+async def get_pending_tickets(limit: int = 100):
+    """
+    Obtiene tickets pendientes de predicción.
+    """
+    try:
+        tickets = get_tickets_pending_prediction(limit=limit)
+        return {
+            "total": len(tickets),
+            "tickets": tickets
+        }
+    except Exception as e:
+        logger.error(f"Error obteniendo tickets pendientes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

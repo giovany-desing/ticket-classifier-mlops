@@ -171,3 +171,4 @@ xgboost
 yarl
 zc.lockfile
 zipp
+supabase

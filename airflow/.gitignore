@@ -1,0 +1,20 @@
+# Airflow
+logs/
+*.log
+*.pyc
+__pycache__/
+.pytest_cache/
+.airflowignore
+
+# Environment
+.env
+.venv
+venv/
+
+# Database
+*.db
+*.sqlite
+
+# Docker
+.dockerignore
+

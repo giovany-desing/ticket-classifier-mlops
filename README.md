@@ -57,6 +57,12 @@ Sistema completo de MLOps para clasificación automática de tickets de soporte 
                     │
                     ▼
          ┌──────────────────┐
+         │ Apache Airflow    │
+         │   Orquestación    │
+         └────────┬──────────┘
+                  │
+                  ▼
+         ┌──────────────────┐
          │ Reentrenamiento  │
          │   Automático     │
          └──────────────────┘
@@ -93,7 +99,18 @@ ticket-classifier-mlops/
 
 ## 🚀 Inicio Rápido
 
-### 1. Instalación
+### Opción 1: Setup Automático (Recomendado)
+
+```bash
+# Clonar repositorio
+git clone <repo-url>
+cd ticket-classifier-mlops
+
+# Ejecutar script de setup
+./setup.sh
+```
+
+### Opción 2: Setup Manual
 
 ```bash
 # Clonar repositorio
@@ -101,15 +118,18 @@ git clone <repo-url>
 cd ticket-classifier-mlops
 
 # Crear entorno virtual
-python -m venv venv
+python3.9 -m venv venv
 source venv/bin/activate  # En Windows: venv\Scripts\activate
 
-# Instalar dependencias
-pip install -r requirements.txt
+# Instalar dependencias (versiones fijas para reproducibilidad)
+pip install --upgrade pip
+pip install -r requirements-lock.txt
 
 # Descargar recursos NLTK
-python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords')"
+python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab'); nltk.download('stopwords')"
 ```
+
+**📚 Ver `SETUP.md` para guía completa de setup y reproducibilidad.**
 
 ### 2. Configurar DVC y S3
 
@@ -345,8 +365,36 @@ export AWS_SECRET_ACCESS_KEY=tu_secret
 - Verificar que hay datos en `data-tickets-train/dataset_tickets.csv`
 - Verificar permisos de AWS para DVC push
 
+## 🚀 Orquestación con Apache Airflow
+
+El sistema incluye orquestación completa con Apache Airflow:
+
+### DAGs Disponibles
+
+1. **`mlops_ticket_classifier_pipeline`** - Pipeline completo E2E
+   - Monitoreo → Reentrenamiento → Deploy
+   - Schedule: Cada 6 horas
+
+2. **`train_model_manual`** - Entrenamiento manual
+   - Útil para reentrenamientos forzados
+
+3. **`monitor_only`** - Solo monitoreo
+   - Schedule: Cada hora
+
+### Inicio Rápido con Airflow
+
+```bash
+cd airflow
+docker-compose up -d
+```
+
+Accede a la UI en: http://localhost:8080
+
+Ver documentación completa en: `airflow/README.md`
+
 ## 📚 Próximos Pasos
 
+- [x] ✅ Orquestación con Apache Airflow
 - [ ] Implementar notificaciones (Slack/Email)
 - [ ] Dashboard de monitoreo (Grafana/Dash)
 - [ ] A/B testing de modelos
