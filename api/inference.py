@@ -212,12 +212,9 @@ def download_model_from_s3():
 
         MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-        # Probar diferentes paths que DVC puede usar
+        # Path correcto de DVC: dvc-storage/models/files/md5/{first2}/{rest}
         paths_to_try = [
-            f"dvc-storage/models/{md5_hash[:2]}/{md5_hash[2:]}",
-            f"dvc-storage/models/{md5_hash}",
-            f"dvc-storage/models/files/md5/{md5_hash[:2]}/{md5_hash[2:]}",
-            f"files/md5/{md5_hash[:2]}/{md5_hash[2:]}",
+            f"dvc-storage/models/files/md5/{md5_hash[:2]}/{md5_hash[2:]}",  # Path correcto
         ]
 
         for s3_key in paths_to_try:

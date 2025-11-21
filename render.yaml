@@ -8,9 +8,7 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
-      # Descargar modelo desde S3 usando script dedicado
-      echo "📥 Descargando modelo desde S3..."
-      python scripts/download_model.py || echo "⚠️ No se pudo descargar modelo, la API funcionará sin modelo inicial"
+      python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('stopwords', quiet=True)"
     startCommand: uvicorn api.inference:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
