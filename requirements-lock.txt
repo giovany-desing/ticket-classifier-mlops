@@ -17,48 +17,48 @@
 # ============================================================================
 
 # Core ML Libraries (críticas para reproducibilidad de modelos)
-numpy==1.24.3
-pandas==2.0.3
-scikit-learn==1.3.0
-scipy==1.11.1
-joblib==1.3.2
+numpy
+pandas
+scikit-learn
+scipy
+joblib
 
 # ML Frameworks (afectan resultados de entrenamiento)
-xgboost==2.0.2
-lightgbm==4.1.0
-optuna==3.3.0
-optuna-integration==3.3.0
+xgboost
+lightgbm
+optuna
+optuna-integration
 
 # MLflow (tracking de experimentos)
-mlflow==2.8.1
-mlflow-skinny==2.8.1
+mlflow
+mlflow-skinny
 
 # NLP (afecta preprocesamiento)
-nltk==3.8.1
+nltk
 
 # API Framework
-fastapi==0.104.1
-uvicorn==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
+fastapi
+uvicorn
+pydantic
+pydantic-settings
 
 # Data Version Control
-dvc[s3]==3.38.1
-dvc-data==2.10.0
-dvc-s3==3.1.0
+dvc[s3]
+dvc-data
+dvc-s3
 
 # AWS (para DVC)
-boto3==1.29.7
-botocore==1.32.7
-s3fs==2023.12.2
+boto3
+botocore
+s3fs
 
 # Utilities esenciales
-requests==2.31.0
-PyYAML==6.0.1
-python-dotenv==1.0.0
+requests
+PyYAML
+python-dotenv
 
 # Database
-supabase==2.0.0
+supabase
 
 # ============================================================================
 # NOTA: Las demás dependencias se instalan desde requirements.txt
