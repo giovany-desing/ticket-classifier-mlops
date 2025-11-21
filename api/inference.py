@@ -173,63 +173,87 @@ def load_model():
 
 # Descargar modelo desde S3 si no existe
 def download_model_from_s3():
-    """Descarga el modelo desde S3 usando boto3 (mas robusto que DVC)"""
+    """Descarga el modelo desde S3 usando boto3 - busca en multiples paths"""
     if MODEL_PATH.exists():
         logger.info(f"Modelo ya existe: {MODEL_PATH}")
         return True
 
     logger.info("Modelo no encontrado localmente, intentando descargar desde S3...")
 
-    # Verificar credenciales AWS
     aws_key = os.getenv("AWS_ACCESS_KEY_ID")
     aws_secret = os.getenv("AWS_SECRET_ACCESS_KEY")
 
     if not aws_key or not aws_secret:
-        logger.warning("Credenciales AWS no configuradas, no se puede descargar modelo")
+        logger.warning("Credenciales AWS no configuradas")
         return False
 
     try:
         import boto3
         from botocore.exceptions import ClientError
+        import yaml
 
-        # Configuracion S3 (basada en .dvc/config)
+        # Leer hash del archivo .dvc
+        dvc_file = MODEL_PATH.parent / "best_model.pkl.dvc"
+        if not dvc_file.exists():
+            logger.error(f"Archivo DVC no encontrado: {dvc_file}")
+            return False
+
+        with open(dvc_file, 'r') as f:
+            dvc_content = yaml.safe_load(f)
+        md5_hash = dvc_content['outs'][0]['md5']
+        logger.info(f"Hash MD5 del modelo: {md5_hash}")
+
         bucket = "ticketsfidudavivienda"
-        # DVC guarda archivos usando MD5: primeros 2 chars como directorio
-        # MD5 del modelo: 204e6d0e36a8d6658f0bde0039761267
-        s3_key = "dvc-storage/models/20/4e6d0e36a8d6658f0bde0039761267"
-
-        logger.info(f"Descargando desde s3://{bucket}/{s3_key}")
-
-        # Crear cliente S3
-        s3_client = boto3.client(
-            's3',
+        s3_client = boto3.client('s3',
             aws_access_key_id=aws_key,
             aws_secret_access_key=aws_secret,
             region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1")
         )
 
-        # Crear directorio models si no existe
         MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-        # Descargar archivo
-        s3_client.download_file(bucket, s3_key, str(MODEL_PATH))
+        # Probar diferentes paths que DVC puede usar
+        paths_to_try = [
+            f"dvc-storage/models/{md5_hash[:2]}/{md5_hash[2:]}",
+            f"dvc-storage/models/{md5_hash}",
+            f"dvc-storage/models/files/md5/{md5_hash[:2]}/{md5_hash[2:]}",
+            f"files/md5/{md5_hash[:2]}/{md5_hash[2:]}",
+        ]
 
-        if MODEL_PATH.exists():
-            size_mb = MODEL_PATH.stat().st_size / (1024 * 1024)
-            logger.info(f"Modelo descargado exitosamente: {MODEL_PATH} ({size_mb:.2f} MB)")
-            return True
-        else:
-            logger.error("Descarga completa pero archivo no encontrado")
-            return False
+        for s3_key in paths_to_try:
+            try:
+                logger.info(f"Probando: s3://{bucket}/{s3_key}")
+                s3_client.head_object(Bucket=bucket, Key=s3_key)
+                s3_client.download_file(bucket, s3_key, str(MODEL_PATH))
+                if MODEL_PATH.exists():
+                    size_mb = MODEL_PATH.stat().st_size / (1024*1024)
+                    logger.info(f"EXITO! Modelo descargado: {MODEL_PATH} ({size_mb:.2f} MB)")
+                    return True
+            except ClientError as e:
+                if e.response['Error']['Code'] == '404':
+                    logger.info(f"  -> No encontrado")
+                    continue
+                logger.error(f"  -> Error: {e}")
+
+        # Listar bucket para diagnostico
+        logger.error("Modelo no encontrado. Listando contenido del bucket...")
+        try:
+            for prefix in ["dvc-storage/", "files/", ""]:
+                response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=20)
+                if 'Contents' in response:
+                    logger.info(f"Contenido en '{prefix}':")
+                    for obj in response['Contents'][:10]:
+                        logger.info(f"  {obj['Key']} ({obj['Size']} bytes)")
+        except Exception as e:
+            logger.error(f"Error listando: {e}")
+
+        return False
 
     except ImportError:
-        logger.error("boto3 no instalado. Agregalo a requirements.txt")
-        return False
-    except ClientError as e:
-        logger.error(f"Error de AWS S3: {e}")
+        logger.error("boto3 no instalado")
         return False
     except Exception as e:
-        logger.error(f"Error descargando modelo: {e}")
+        logger.error(f"Error: {e}")
         return False
 
 # Cargar modelo al iniciar
