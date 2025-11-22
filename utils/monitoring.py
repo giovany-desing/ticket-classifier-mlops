@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import gzip
+import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
@@ -198,20 +200,87 @@ class DriftDetector:
 
 
 class PredictionLogger:
-    """Logger para almacenar predicciones y métricas"""
+    """Logger para almacenar predicciones y métricas con rotación automática"""
     
-    def __init__(self, log_dir: str = "monitoring/logs"):
+    def __init__(
+        self, 
+        log_dir: str = "monitoring/logs",
+        max_bytes: int = 10 * 1024 * 1024,  # 10 MB por defecto
+        backup_count: int = 5  # Mantener 5 backups
+    ):
         """
-        Inicializa el logger de predicciones.
+        Inicializa el logger de predicciones con rotación automática.
         
         Args:
             log_dir: Directorio donde se guardan los logs
+            max_bytes: Tamaño máximo del archivo antes de rotar (default: 10MB)
+            backup_count: Número de archivos de backup a mantener (default: 5)
         """
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.predictions_file = self.log_dir / "predictions.jsonl"
         self.metrics_file = self.log_dir / "daily_metrics.json"
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
         
+    def _should_rollover(self) -> bool:
+        """
+        Verifica si el archivo debe rotarse.
+        
+        Returns:
+            True si debe rotarse, False en caso contrario
+        """
+        if not self.predictions_file.exists():
+            return False
+        
+        try:
+            file_size = self.predictions_file.stat().st_size
+            return file_size >= self.max_bytes
+        except Exception as e:
+            logger.warning(f"Error verificando tamaño del archivo: {e}")
+            return False
+    
+    def _rotate_logs(self):
+        """
+        Rota los archivos de log.
+        
+        Ejemplo:
+        - predictions.jsonl → predictions.jsonl.1.gz (comprimido)
+        - predictions.jsonl.1.gz → predictions.jsonl.2.gz
+        - predictions.jsonl.5.gz → eliminado
+        """
+        if not self.predictions_file.exists():
+            return
+        
+        try:
+            # Rotar archivos existentes (de atrás hacia adelante)
+            for i in range(self.backup_count - 1, 0, -1):
+                old_file = self.log_dir / f"predictions.jsonl.{i}.gz"
+                new_file = self.log_dir / f"predictions.jsonl.{i + 1}.gz"
+                
+                if old_file.exists():
+                    if i + 1 <= self.backup_count:
+                        # Mover al siguiente número
+                        shutil.move(str(old_file), str(new_file))
+                    else:
+                        # Eliminar si excede backup_count
+                        old_file.unlink()
+            
+            # Comprimir el archivo actual y moverlo a .1.gz
+            compressed_file = self.log_dir / "predictions.jsonl.1.gz"
+            with open(self.predictions_file, 'rb') as f_in:
+                with gzip.open(compressed_file, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            
+            # Eliminar el archivo original y crear uno nuevo vacío
+            self.predictions_file.unlink()
+            self.predictions_file.touch()
+            
+            logger.info(f"✅ Logs rotados exitosamente. Archivo comprimido: {compressed_file.name}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error rotando logs: {e}")
+    
     def log_prediction(
         self,
         text: str,
@@ -221,7 +290,7 @@ class PredictionLogger:
         timestamp: Optional[datetime] = None
     ):
         """
-        Registra una predicción individual.
+        Registra una predicción individual con rotación automática.
         
         Args:
             text: Texto de entrada
@@ -233,6 +302,10 @@ class PredictionLogger:
         if timestamp is None:
             timestamp = datetime.now()
         
+        # Verificar si debe rotar antes de escribir
+        if self._should_rollover():
+            self._rotate_logs()
+        
         log_entry = {
             'timestamp': timestamp.isoformat(),
             'text': text[:200],  # Limitar tamaño
@@ -243,12 +316,50 @@ class PredictionLogger:
         }
         
         # Append to JSONL file
-        with open(self.predictions_file, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+        try:
+            with open(self.predictions_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+        except Exception as e:
+            logger.error(f"❌ Error escribiendo log: {e}")
+    
+    def _read_log_file(self, file_path: Path, cutoff_time: datetime, predictions: list):
+        """
+        Lee un archivo de log (normal o comprimido) y extrae predicciones.
+        
+        Args:
+            file_path: Path al archivo
+            cutoff_time: Timestamp mínimo para incluir predicciones
+            predictions: Lista donde agregar las predicciones
+        """
+        try:
+            # Determinar si es archivo comprimido
+            if file_path.suffix == '.gz':
+                open_func = lambda: gzip.open(file_path, 'rt', encoding='utf-8')
+            else:
+                open_func = lambda: open(file_path, 'r', encoding='utf-8')
+            
+            with open_func() as f:
+                for line_number, line in enumerate(f, 1):
+                    try:
+                        entry = json.loads(line)
+                        entry_time = datetime.fromisoformat(entry['timestamp'])
+                        if entry_time >= cutoff_time:
+                            predictions.append(entry)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"JSON inválido en {file_path.name} línea {line_number}: {e}")
+                        continue
+                    except (KeyError, ValueError) as e:
+                        logger.warning(f"Datos inválidos en {file_path.name} línea {line_number}: {e}")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error inesperado en {file_path.name} línea {line_number}: {e}")
+                        continue
+        except Exception as e:
+            logger.error(f"Error leyendo archivo {file_path}: {e}")
     
     def get_recent_predictions(self, hours: int = 24) -> pd.DataFrame:
         """
-        Obtiene predicciones recientes.
+        Obtiene predicciones recientes de todos los archivos (incluyendo rotados).
         
         Args:
             hours: Número de horas hacia atrás
@@ -256,35 +367,31 @@ class PredictionLogger:
         Returns:
             DataFrame con predicciones
         """
-        if not self.predictions_file.exists():
-            return pd.DataFrame()
-        
         cutoff_time = datetime.now() - timedelta(hours=hours)
-        
         predictions = []
-        with open(self.predictions_file, 'r', encoding='utf-8') as f:
-            for line_number, line in enumerate(f, 1):
-                try:
-                    entry = json.loads(line)
-                    entry_time = datetime.fromisoformat(entry['timestamp'])
-                    if entry_time >= cutoff_time:
-                        predictions.append(entry)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"JSON inválido en línea {line_number}: {e}")
-                    continue
-                except (KeyError, ValueError) as e:
-                    logger.warning(f"Datos inválidos en línea {line_number}: {e}")
-                    continue
-                except Exception as e:
-                    logger.error(f"Error inesperado en línea {line_number}: {e}")
-                    continue
+        
+        # Leer archivo actual
+        if self.predictions_file.exists():
+            self._read_log_file(self.predictions_file, cutoff_time, predictions)
+        
+        # Leer archivos rotados (si son recientes)
+        for i in range(1, self.backup_count + 1):
+            rotated_file = self.log_dir / f"predictions.jsonl.{i}.gz"
+            if rotated_file.exists():
+                # Verificar si el archivo es potencialmente relevante por fecha
+                file_mtime = datetime.fromtimestamp(rotated_file.stat().st_mtime)
+                if file_mtime >= cutoff_time:
+                    self._read_log_file(rotated_file, cutoff_time, predictions)
+                else:
+                    # Si el archivo modificado es más antiguo que cutoff, no hay datos relevantes
+                    break
         
         if not predictions:
             return pd.DataFrame()
         
         df = pd.DataFrame(predictions)
         df['timestamp'] = pd.to_datetime(df['timestamp'])
-        return df
+        return df.sort_values('timestamp', ascending=False)
     
     def compute_daily_metrics(self) -> Dict[str, Any]:
         """
