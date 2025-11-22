@@ -1,7 +1,8 @@
 [core]
     remote = models
-['remote "myremote"']
+[remote "myremote"]
     url = s3://data-tickets-train/datasets
     region = us-east-1
-['remote "models"']
+[remote "models"]
     url = s3://ticketsfidudavivienda/dvc-storage/models
+    region = us-east-1
