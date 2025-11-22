@@ -14,9 +14,10 @@ Fecha: 2024
 
 import os
 import logging
+import time
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
-from functools import lru_cache
+from typing import Dict, List, Optional, Any, Tuple, Callable
+from functools import lru_cache, wraps
 
 try:
     from supabase import create_client, Client
@@ -26,6 +27,71 @@ except ImportError:
     logging.warning("supabase-py no está instalado. Instala con: pip install supabase")
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# RETRY LOGIC CON EXPONENTIAL BACKOFF
+# ============================================================================
+
+def retry_with_exponential_backoff(
+    max_retries: int = 4,
+    initial_delay: float = 1.0,
+    max_delay: float = 60.0,
+    exponential_base: float = 2.0,
+    exceptions: Tuple = (Exception,)
+):
+    """
+    Decorador para reintentar una función con exponential backoff.
+    
+    Args:
+        max_retries: Número máximo de reintentos (default: 4)
+        initial_delay: Delay inicial en segundos (default: 1.0)
+        max_delay: Delay máximo en segundos (default: 60.0)
+        exponential_base: Base para el cálculo exponencial (default: 2.0)
+        exceptions: Tupla de excepciones a capturar (default: todas)
+    
+    Returns:
+        Decorador que aplica retry logic
+    
+    Ejemplo:
+        @retry_with_exponential_backoff(max_retries=3)
+        def update_database():
+            # código que puede fallar
+            pass
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            retries = 0
+            delay = initial_delay
+            
+            while retries < max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    retries += 1
+                    
+                    if retries >= max_retries:
+                        logger.error(
+                            f"❌ {func.__name__} falló después de {max_retries} intentos. "
+                            f"Último error: {e}"
+                        )
+                        raise
+                    
+                    # Calcular delay con exponential backoff
+                    wait_time = min(delay * (exponential_base ** (retries - 1)), max_delay)
+                    
+                    logger.warning(
+                        f"⚠️  {func.__name__} falló (intento {retries}/{max_retries}). "
+                        f"Error: {e}. Reintentando en {wait_time:.1f}s..."
+                    )
+                    
+                    time.sleep(wait_time)
+            
+            # Nunca debería llegar aquí, pero por si acaso
+            return func(*args, **kwargs)
+        
+        return wrapper
+    return decorator
 
 # ============================================================================
 # CONFIGURACIÓN
@@ -118,6 +184,67 @@ def verify_causa_column() -> bool:
 # FUNCIONES DE ACTUALIZACIÓN
 # ============================================================================
 
+@retry_with_exponential_backoff(
+    max_retries=4,
+    initial_delay=1.0,
+    exceptions=(Exception,)
+)
+def _execute_update_ticket(
+    client: Client,
+    ticket_number: str,
+    update_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Ejecuta la actualización del ticket en Supabase con retry automático.
+    
+    Esta función está separada para aplicar retry solo a la operación de BD,
+    no a la validación de credenciales.
+    
+    Args:
+        client: Cliente de Supabase
+        ticket_number: Número del ticket
+        update_data: Datos a actualizar
+        
+    Returns:
+        Dict con resultado de la operación
+        
+    Raises:
+        Exception: Si falla después de todos los reintentos
+    """
+    logger.info(f"Ejecutando UPDATE en tabla {TABLE_NAME} para ticket number='{ticket_number}'")
+    response = client.table(TABLE_NAME).update(update_data).eq("number", ticket_number).execute()
+    
+    # Verificar si se actualizó algún registro
+    if response.data and len(response.data) > 0:
+        logger.info(f"✅ Ticket {ticket_number} actualizado exitosamente en BD")
+        logger.debug(f"Datos actualizados: {response.data[0]}")
+        return {
+            'success': True,
+            'message': f'Causa actualizada para ticket {ticket_number}',
+            'ticket_number': ticket_number,
+            'causa': update_data.get('causa'),
+            'updated_at': update_data['updated_at'],
+            'data': response.data[0]
+        }
+    else:
+        logger.warning(f"⚠️  Ticket {ticket_number} no encontrado en la tabla {TABLE_NAME}")
+        logger.warning(f"   Verifica que el ticket_id '{ticket_number}' coincida con la columna 'number' en la BD")
+        
+        # Intentar verificar si el ticket existe con otro formato
+        try:
+            check_response = client.table(TABLE_NAME).select("number").eq("number", ticket_number).limit(1).execute()
+            if not check_response.data or len(check_response.data) == 0:
+                logger.warning(f"   No existe ningún registro con number='{ticket_number}' en la BD")
+        except Exception as e:
+            logger.debug(f"   No se pudo verificar existencia del ticket: {e}")
+        
+        return {
+            'success': False,
+            'error': f'Ticket {ticket_number} no encontrado en la base de datos',
+            'ticket_number': ticket_number,
+            'suggestion': f'Verifica que el ticket_id "{ticket_number}" coincida exactamente con la columna "number" en la tabla {TABLE_NAME}'
+        }
+
 def update_ticket_causa(
     ticket_number: str,
     causa: str,
@@ -125,7 +252,12 @@ def update_ticket_causa(
     metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
-    Actualiza la causa de un ticket en Supabase.
+    Actualiza la causa de un ticket en Supabase con retry automático.
+    
+    Implementa exponential backoff para manejar:
+    - Timeouts de red
+    - Rate limiting de Supabase
+    - Conexiones temporalmente caídas
     
     Args:
         ticket_number: Número del ticket (campo 'number')
@@ -179,40 +311,8 @@ def update_ticket_causa(
         # if metadata:
         #     update_data["prediction_metadata"] = metadata
         
-        # Ejecutar UPDATE
-        logger.info(f"Ejecutando UPDATE en tabla {TABLE_NAME} para ticket number='{ticket_number}'")
-        response = client.table(TABLE_NAME).update(update_data).eq("number", ticket_number).execute()
-        
-        # Verificar si se actualizó algún registro
-        if response.data and len(response.data) > 0:
-            logger.info(f"✅ Ticket {ticket_number} actualizado exitosamente en BD")
-            logger.debug(f"Datos actualizados: {response.data[0]}")
-            return {
-                'success': True,
-                'message': f'Causa actualizada para ticket {ticket_number}',
-                'ticket_number': ticket_number,
-                'causa': causa,
-                'updated_at': update_data['updated_at'],
-                'data': response.data[0]
-            }
-        else:
-            logger.warning(f"⚠️  Ticket {ticket_number} no encontrado en la tabla {TABLE_NAME}")
-            logger.warning(f"   Verifica que el ticket_id '{ticket_number}' coincida con la columna 'number' en la BD")
-            
-            # Intentar verificar si el ticket existe con otro formato
-            try:
-                check_response = client.table(TABLE_NAME).select("number").eq("number", ticket_number).limit(1).execute()
-                if not check_response.data or len(check_response.data) == 0:
-                    logger.warning(f"   No existe ningún registro con number='{ticket_number}' en la BD")
-            except Exception as e:
-                logger.debug(f"   No se pudo verificar existencia del ticket: {e}")
-            
-            return {
-                'success': False,
-                'error': f'Ticket {ticket_number} no encontrado en la base de datos',
-                'ticket_number': ticket_number,
-                'suggestion': f'Verifica que el ticket_id "{ticket_number}" coincida exactamente con la columna "number" en la tabla {TABLE_NAME}'
-            }
+        # Ejecutar UPDATE con retry automático
+        return _execute_update_ticket(client, ticket_number, update_data)
         
     except Exception as e:
         logger.error(f"❌ Error actualizando ticket {ticket_number}: {e}")

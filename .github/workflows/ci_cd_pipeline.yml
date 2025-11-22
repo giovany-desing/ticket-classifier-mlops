@@ -307,6 +307,162 @@ jobs:
           fi
           echo "3. Test prediction endpoint" >> $GITHUB_STEP_SUMMARY
 
+  # ========================================================================
+  # JOB 3: NOTIFICACIONES
+  # ========================================================================
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [validate, deploy]
+    if: always()  # Ejecutar siempre, incluso si fallan jobs anteriores
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          pip install requests
+      
+      - name: Send notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF: ${{ github.ref_name }}
+        run: |
+          python - <<'EOF'
+          import os
+          import sys
+          import requests
+          import json
+          from datetime import datetime
+
+          # Resultados de los jobs
+          validate_result = os.getenv('VALIDATE_RESULT', 'skipped')
+          deploy_result = os.getenv('DEPLOY_RESULT', 'skipped')
+          
+          # Info del commit
+          actor = os.getenv('GITHUB_ACTOR')
+          sha = os.getenv('GITHUB_SHA', 'unknown')[:7]
+          branch = os.getenv('GITHUB_REF', 'unknown')
+          
+          # Determinar estado general
+          if deploy_result == 'success':
+              status = 'success'
+              emoji = '✅'
+              color = '#00ff00'
+          elif deploy_result == 'failure' or validate_result == 'failure':
+              status = 'failure'
+              emoji = '❌'
+              color = '#ff0000'
+          else:
+              status = 'skipped'
+              emoji = 'ℹ️'
+              color = '#808080'
+          
+          # Construir mensaje
+          message = f"{emoji} **CI/CD Pipeline {status.upper()}**\n\n"
+          message += f"Branch: `{branch}`\n"
+          message += f"Commit: `{sha}`\n"
+          message += f"Author: {actor}\n\n"
+          message += f"**Results:**\n"
+          message += f"- Validate: {validate_result}\n"
+          message += f"- Deploy: {deploy_result}\n"
+          
+          # Enviar a Slack
+          slack_webhook = os.getenv('SLACK_WEBHOOK_URL')
+          if slack_webhook:
+              payload = {
+                  "text": f"{emoji} CI/CD Pipeline {status.upper()}",
+                  "attachments": [{
+                      "color": color,
+                      "fields": [
+                          {"title": "Branch", "value": branch, "short": True},
+                          {"title": "Commit", "value": sha, "short": True},
+                          {"title": "Author", "value": actor, "short": True},
+                          {"title": "Validate", "value": validate_result, "short": True},
+                          {"title": "Deploy", "value": deploy_result, "short": True}
+                      ],
+                      "footer": "GitHub Actions",
+                      "ts": int(datetime.now().timestamp())
+                  }]
+              }
+              
+              try:
+                  r = requests.post(slack_webhook, json=payload, timeout=10)
+                  if r.status_code == 200:
+                      print("✅ Slack notification sent")
+                  else:
+                      print(f"⚠️  Slack notification failed: {r.status_code}")
+              except Exception as e:
+                  print(f"⚠️  Error sending Slack notification: {e}")
+          
+          # Enviar a Discord
+          discord_webhook = os.getenv('DISCORD_WEBHOOK_URL')
+          if discord_webhook:
+              color_int = int(color.replace('#', ''), 16)
+              
+              payload = {
+                  "embeds": [{
+                      "title": f"{emoji} CI/CD Pipeline {status.upper()}",
+                      "description": message,
+                      "color": color_int,
+                      "footer": {"text": "GitHub Actions"},
+                      "timestamp": datetime.now().isoformat()
+                  }]
+              }
+              
+              try:
+                  r = requests.post(discord_webhook, json=payload, timeout=10)
+                  if r.status_code == 204:
+                      print("✅ Discord notification sent")
+                  else:
+                      print(f"⚠️  Discord notification failed: {r.status_code}")
+              except Exception as e:
+                  print(f"⚠️  Error sending Discord notification: {e}")
+          
+          # Enviar a Telegram
+          telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+          telegram_chat = os.getenv('TELEGRAM_CHAT_ID')
+          if telegram_token and telegram_chat:
+              url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+              payload = {
+                  "chat_id": telegram_chat,
+                  "text": message,
+                  "parse_mode": "Markdown"
+              }
+              
+              try:
+                  r = requests.post(url, json=payload, timeout=10)
+                  if r.status_code == 200:
+                      print("✅ Telegram notification sent")
+                  else:
+                      print(f"⚠️  Telegram notification failed: {r.status_code}")
+              except Exception as e:
+                  print(f"⚠️  Error sending Telegram notification: {e}")
+          
+          # Si no hay webhooks configurados
+          if not any([slack_webhook, discord_webhook, (telegram_token and telegram_chat)]):
+              print("ℹ️  No notification webhooks configured")
+              print("   Configure SLACK_WEBHOOK_URL, DISCORD_WEBHOOK_URL, or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID in GitHub secrets")
+          
+          EOF
+
+
+
+
+
 
 
 

@@ -29,6 +29,17 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
+# Importar módulo de notificaciones
+from utils.notifications import (
+    notify_training_started,
+    notify_training_completed,
+    notify_training_failed,
+    notify_deploy_completed,
+    notify_drift_detected,
+    send_notification,
+    NotificationLevel
+)
+
 # ============================================================================
 # CONFIGURACIÓN
 # ============================================================================
@@ -184,6 +195,9 @@ def decide_retraining(**context):
     if drift_detected and drift_score > DRIFT_THRESHOLD:
         should_retrain = True
         reasons.append(f"Data drift detectado (score: {drift_score:.4f})")
+        
+        # Notificar drift detectado
+        notify_drift_detected(drift_score=drift_score, drift_type="data")
     
     # Check 2: Performance drop
     if current_metrics and trained_f1:
@@ -209,46 +223,111 @@ def decide_retraining(**context):
     return should_retrain
 
 def save_current_metrics(**context):
-    """Guarda métricas del modelo actual ANTES de reentrenar"""
+    """
+    Guarda métricas Y hace backup del modelo actual ANTES de reentrenar.
+    
+    Esto es crítico para poder comparar correctamente el nuevo modelo
+    contra el anterior después del entrenamiento.
+    """
     import json
+    import shutil
+    from datetime import datetime
     
     metadata_path = project_root / "models" / "best_model_metadata.json"
+    model_path = project_root / "models" / "best_model.pkl"
+    backup_dir = project_root / "models" / "backups"
+    backup_dir.mkdir(exist_ok=True)
     
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Guardar métricas en XCom
     if metadata_path.exists():
         with open(metadata_path, 'r') as f:
             current_metrics = json.load(f)
+        
         context['ti'].xcom_push(key='pre_training_metrics', value=current_metrics)
-        print(f"Saved pre-training metrics: F1={current_metrics.get('f1_score', 0.0)}")
+        print(f"✅ Guardadas métricas pre-entrenamiento:")
+        print(f"   F1 Score: {current_metrics.get('f1_score', 0.0):.4f}")
+        print(f"   Modelo: {current_metrics.get('model_name', 'unknown')}")
+        
+        # Hacer backup del modelo actual (por si necesitamos rollback)
+        if model_path.exists():
+            backup_model_path = backup_dir / f"best_model_backup_{timestamp}.pkl"
+            backup_metadata_path = backup_dir / f"best_model_metadata_backup_{timestamp}.json"
+            
+            shutil.copy2(model_path, backup_model_path)
+            shutil.copy2(metadata_path, backup_metadata_path)
+            
+            print(f"✅ Backup creado: {backup_model_path.name}")
+            context['ti'].xcom_push(key='backup_model_path', value=str(backup_model_path))
+        
         return current_metrics
     
-    print("No existing model metadata found")
-    return None
+    print("⚠️  No se encontró modelo existente (primer entrenamiento)")
+    context['ti'].xcom_push(key='pre_training_metrics', value={'f1_score': 0.0})
+    return {'f1_score': 0.0}
 
 def train_model(**context):
     """Entrena el modelo"""
     import subprocess
     
+    # Obtener razón del reentrenamiento
+    retrain_reasons = context['ti'].xcom_pull(
+        key='retrain_reasons',
+        task_ids='monitoring.decide_retraining'
+    )
+    reason = ", ".join(retrain_reasons) if retrain_reasons else "programado"
+    
+    # Notificar inicio
+    notify_training_started(model_name="Multi-Model", reason=reason)
+    
     train_script = project_root / "scripts" / "train_model.py"
     
-    result = subprocess.run(
-        [sys.executable, str(train_script)],
-        cwd=project_root,
-        capture_output=True,
-        text=True,
-        timeout=3600  # 1 hora máximo
-    )
-    
-    if result.returncode != 0:
-        print(f"Training failed:")
-        print(result.stderr)
-        raise Exception(f"Training failed with return code {result.returncode}")
-    
-    print("Training completed successfully")
-    return True
+    try:
+        result = subprocess.run(
+            [sys.executable, str(train_script)],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=3600  # 1 hora máximo
+        )
+        
+        if result.returncode != 0:
+            error_msg = f"Training failed with return code {result.returncode}"
+            print(f"Training failed:")
+            print(result.stderr)
+            
+            # Notificar fallo
+            notify_training_failed(result.stderr[:500] if result.stderr else error_msg)
+            
+            raise Exception(error_msg)
+        
+        print("Training completed successfully")
+        return True
+        
+    except subprocess.TimeoutExpired:
+        error_msg = "Training timeout after 1 hour"
+        notify_training_failed(error_msg)
+        raise Exception(error_msg)
+    except Exception as e:
+        notify_training_failed(str(e))
+        raise
 
 def compare_models(**context):
-    """Compara modelo anterior con el nuevo entrenado"""
+    """
+    Compara modelo anterior con el nuevo entrenado.
+    
+    IMPORTANTE: Esta función compara:
+    - Modelo ANTERIOR: Métricas guardadas en XCom ANTES del entrenamiento
+    - Modelo NUEVO: Métricas del archivo generado DESPUÉS del entrenamiento
+    
+    NO compara el mismo archivo dos veces.
+    """
     import json
+    
+    print("=" * 80)
+    print("COMPARACIÓN DE MODELOS")
+    print("=" * 80)
     
     # Obtener métricas del modelo ANTERIOR (guardadas antes del entrenamiento)
     old_metrics = context['ti'].xcom_pull(
@@ -260,59 +339,130 @@ def compare_models(**context):
     new_metadata_path = project_root / "models" / "best_model_metadata.json"
     
     if not new_metadata_path.exists():
-        print("No se encontró metadata del nuevo modelo")
+        print("❌ ERROR: No se encontró metadata del nuevo modelo")
+        print("   El entrenamiento puede haber fallado")
         return False
     
     with open(new_metadata_path, 'r') as f:
         new_metadata = json.load(f)
     
+    # Extraer métricas
     new_f1 = new_metadata.get('f1_score', 0.0)
+    new_model_name = new_metadata.get('model_name', 'unknown')
+    new_training_date = new_metadata.get('training_date', 'unknown')
+    
     old_f1 = old_metrics.get('f1_score', 0.0) if old_metrics else 0.0
+    old_model_name = old_metrics.get('model_name', 'ninguno') if old_metrics else 'ninguno'
     
     # Calcular mejora
     improvement = new_f1 - old_f1
+    improvement_pct = (improvement / old_f1 * 100) if old_f1 > 0 else 100.0
     min_improvement = float(Variable.get("MIN_IMPROVEMENT_FOR_DEPLOY", default_var="0.01"))
     
-    print(f"F1 anterior: {old_f1:.4f}")
-    print(f"F1 nuevo: {new_f1:.4f}")
-    print(f"Mejora: {improvement:.4f} (mínimo requerido: {min_improvement})")
+    # Imprimir comparación detallada
+    print(f"\n📊 Modelo ANTERIOR:")
+    print(f"   Algoritmo: {old_model_name}")
+    print(f"   F1 Score: {old_f1:.4f}")
     
+    print(f"\n📊 Modelo NUEVO:")
+    print(f"   Algoritmo: {new_model_name}")
+    print(f"   F1 Score: {new_f1:.4f}")
+    print(f"   Entrenado: {new_training_date}")
+    
+    print(f"\n📈 Comparación:")
+    print(f"   Mejora absoluta: {improvement:+.4f}")
+    print(f"   Mejora porcentual: {improvement_pct:+.2f}%")
+    print(f"   Mínimo requerido: {min_improvement:.4f}")
+    
+    # Decidir si hacer deploy
     should_deploy = improvement >= min_improvement
     
-    # Guardar resultado para siguiente tarea
+    if should_deploy:
+        print(f"\n✅ DECISIÓN: HACER DEPLOY")
+        print(f"   El nuevo modelo es {improvement:.4f} mejor (>{min_improvement:.4f})")
+        
+        # Notificar éxito del entrenamiento
+        notify_training_completed(new_model_name, new_f1, improvement)
+        
+    else:
+        print(f"\n❌ DECISIÓN: NO HACER DEPLOY")
+        print(f"   Mejora insuficiente: {improvement:.4f} < {min_improvement:.4f}")
+        if improvement < 0:
+            print(f"   ⚠️  El nuevo modelo es PEOR que el anterior")
+            
+            # Notificar que el nuevo modelo no mejora
+            send_notification(
+                message=f"Nuevo modelo ({new_model_name}) no mejora el anterior.\n"
+                        f"F1 anterior: {old_f1:.4f}\n"
+                        f"F1 nuevo: {new_f1:.4f}\n"
+                        f"Degradación: {improvement:.4f}",
+                level=NotificationLevel.WARNING,
+                title="Modelo No Mejorado"
+            )
+    
+    print("=" * 80)
+    
+    # Guardar resultados en XCom para siguiente tarea
     context['ti'].xcom_push(key='should_deploy', value=should_deploy)
     context['ti'].xcom_push(key='improvement', value=improvement)
+    context['ti'].xcom_push(key='improvement_pct', value=improvement_pct)
     context['ti'].xcom_push(key='new_f1', value=new_f1)
     context['ti'].xcom_push(key='old_f1', value=old_f1)
-    context['ti'].xcom_push(key='should_deploy', value=should_deploy)
-    
-    print(f"Old F1: {old_f1:.4f}")
-    print(f"New F1: {new_f1:.4f}")
-    print(f"Improvement: {improvement:.4f}")
-    print(f"Should deploy: {should_deploy}")
+    context['ti'].xcom_push(key='new_model_name', value=new_model_name)
+    context['ti'].xcom_push(key='old_model_name', value=old_model_name)
     
     return should_deploy
 
 def deploy_model(**context):
     """Hace deploy del modelo"""
     import subprocess
+    import json
+    
+    # Obtener info del nuevo modelo
+    new_f1 = context['ti'].xcom_pull(key='new_f1', task_ids='retraining.compare_models')
+    new_model_name = context['ti'].xcom_pull(key='new_model_name', task_ids='retraining.compare_models')
     
     deploy_script = project_root / "scripts" / "deploy_model.py"
     
-    result = subprocess.run(
-        [sys.executable, str(deploy_script)],
-        cwd=project_root,
-        capture_output=True,
-        text=True
-    )
-    
-    if result.returncode != 0:
-        print(f"Deploy failed:")
-        print(result.stderr)
-        raise Exception(f"Deploy failed with return code {result.returncode}")
-    
-    print("Deploy completed successfully")
-    return True
+    try:
+        result = subprocess.run(
+            [sys.executable, str(deploy_script)],
+            cwd=project_root,
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            error_msg = f"Deploy failed with return code {result.returncode}"
+            print(f"Deploy failed:")
+            print(result.stderr)
+            
+            # Notificar fallo en deploy
+            send_notification(
+                message=f"❌ Error al desplegar modelo\n\nError: {result.stderr[:500]}",
+                level=NotificationLevel.ERROR,
+                title="Deploy Fallido"
+            )
+            
+            raise Exception(error_msg)
+        
+        print("Deploy completed successfully")
+        
+        # Notificar deploy exitoso
+        notify_deploy_completed(
+            model_name=new_model_name or "Unknown",
+            f1_score=new_f1 or 0.0
+        )
+        
+        return True
+        
+    except Exception as e:
+        send_notification(
+            message=f"❌ Error en deploy: {str(e)}",
+            level=NotificationLevel.ERROR,
+            title="Deploy Fallido"
+        )
+        raise
 
 def push_model_to_s3(**context):
     """Push del modelo a S3 usando DVC"""

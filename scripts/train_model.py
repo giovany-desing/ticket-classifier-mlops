@@ -50,6 +50,36 @@ from lightgbm import LGBMClassifier
 
 import optuna
 from optuna.samplers import TPESampler
+import random
+
+# ============================================================================
+# CONFIGURACIÓN DE REPRODUCIBILIDAD (SEEDS)
+# ============================================================================
+
+# Seed fijo para reproducibilidad completa
+RANDOM_SEED = 42
+
+# Configurar todos los generadores de números aleatorios
+np.random.seed(RANDOM_SEED)
+random.seed(RANDOM_SEED)
+os.environ['PYTHONHASHSEED'] = str(RANDOM_SEED)
+
+# Para TensorFlow/PyTorch (si se usan en el futuro)
+try:
+    import tensorflow as tf
+    tf.random.set_seed(RANDOM_SEED)
+except ImportError:
+    pass
+
+try:
+    import torch
+    torch.manual_seed(RANDOM_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(RANDOM_SEED)
+except ImportError:
+    pass
+
+print(f"✓ Seed fijado a {RANDOM_SEED} para reproducibilidad completa")
 
 # ============================================================================
 # CONFIGURACIÓN DE NLTK (CRÍTICO PARA CI/CD)
@@ -238,7 +268,7 @@ def main():
         # Split train/test
         logger.info("\n📊 Dividiendo datos...")
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
+            X, y, test_size=0.2, random_state=RANDOM_SEED, stratify=y
         )
         logger.info("✓ Train: %d muestras | Test: %d muestras", len(X_train), len(X_test))
         logger.info("✓ Distribución de clases en entrenamiento:")
