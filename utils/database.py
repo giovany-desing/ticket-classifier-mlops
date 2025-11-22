@@ -161,19 +161,23 @@ def update_ticket_causa(
                 'suggestion': 'Verifica que SUPABASE_URL y SUPABASE_KEY sean correctas'
             }
         
-        # Preparar datos de actualización
+        # Preparar datos de actualización (solo columnas esenciales)
         update_data = {
             "causa": str(causa),  # Asegurar que sea string
             "updated_at": datetime.now().isoformat()
         }
         
-        # Agregar confianza si está disponible
-        if confidence is not None:
-            update_data["prediction_confidence"] = float(confidence)
-        
-        # Agregar metadata si está disponible
-        if metadata:
-            update_data["prediction_metadata"] = metadata
+        # Nota: prediction_confidence y prediction_metadata están comentadas
+        # porque estas columnas son opcionales y pueden no existir en todas las tablas.
+        # Si necesitas estas columnas, créalas en Supabase primero:
+        #   ALTER TABLE tickets_fiducia ADD COLUMN IF NOT EXISTS prediction_confidence FLOAT;
+        #   ALTER TABLE tickets_fiducia ADD COLUMN IF NOT EXISTS prediction_metadata JSONB;
+        # 
+        # Luego descomenta estas líneas:
+        # if confidence is not None:
+        #     update_data["prediction_confidence"] = float(confidence)
+        # if metadata:
+        #     update_data["prediction_metadata"] = metadata
         
         # Ejecutar UPDATE
         logger.info(f"Ejecutando UPDATE en tabla {TABLE_NAME} para ticket number='{ticket_number}'")
