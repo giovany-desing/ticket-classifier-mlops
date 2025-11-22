@@ -253,9 +253,33 @@ def download_model_from_s3():
         logger.error(f"Error: {e}")
         return False
 
+# Descargar recursos NLTK
+def download_nltk_data():
+    """Descarga recursos NLTK necesarios para el preprocesamiento"""
+    try:
+        import nltk
+        nltk_data_dir = Path("/tmp/nltk_data")
+        nltk_data_dir.mkdir(parents=True, exist_ok=True)
+        nltk.data.path.insert(0, str(nltk_data_dir))
+
+        resources = ['punkt', 'punkt_tab', 'stopwords']
+        for resource in resources:
+            try:
+                nltk.download(resource, download_dir=str(nltk_data_dir), quiet=True)
+                logger.info(f"NLTK resource '{resource}' descargado")
+            except Exception as e:
+                logger.warning(f"No se pudo descargar NLTK '{resource}': {e}")
+
+        logger.info(f"NLTK data path: {nltk.data.path}")
+    except Exception as e:
+        logger.error(f"Error descargando NLTK data: {e}")
+
 # Cargar modelo al iniciar
 @app.on_event("startup")
 async def startup_event():
+    # Descargar recursos NLTK primero
+    download_nltk_data()
+
     # Intentar descargar modelo si no existe
     download_model_from_s3()
 
