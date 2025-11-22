@@ -171,4 +171,5 @@ xgboost
 yarl
 zc.lockfile
 zipp
+slowapi
 supabase

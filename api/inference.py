@@ -22,10 +22,14 @@ import json
 import pandas as pd
 import numpy as np
 import joblib
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Security
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Security, Request
 from fastapi.security import APIKeyHeader
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Agregar raíz del proyecto al path
 current_dir = Path(__file__).resolve().parent
@@ -59,6 +63,21 @@ app = FastAPI(
     description="API para clasificación de tickets con monitoreo",
     version="1.0.0"
 )
+
+# ============================================================================
+# RATE LIMITING
+# ============================================================================
+
+# Configurar rate limiter basado en IP
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Límites configurables desde variables de entorno
+RATE_LIMIT_PREDICT = os.getenv("RATE_LIMIT_PREDICT", "30/minute")
+RATE_LIMIT_BATCH = os.getenv("RATE_LIMIT_BATCH", "10/minute")
+RATE_LIMIT_ADMIN = os.getenv("RATE_LIMIT_ADMIN", "10/minute")
+RATE_LIMIT_HEALTH = os.getenv("RATE_LIMIT_HEALTH", "60/minute")
 
 # CORS - Configurar orígenes permitidos desde variable de entorno
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8080").split(",")
@@ -356,7 +375,8 @@ class PredictionResponse(BaseModel):
 # ============================================================================
 
 @app.get("/")
-async def root():
+@limiter.limit(RATE_LIMIT_HEALTH)
+async def root(request: Request):
     """Health check"""
     return {
         "status": "online",
@@ -366,7 +386,8 @@ async def root():
     }
 
 @app.get("/health")
-async def health():
+@limiter.limit(RATE_LIMIT_HEALTH)
+async def health(request: Request):
     """Health check detallado"""
     return {
         "status": "healthy" if MODEL is not None else "unhealthy",
@@ -375,8 +396,10 @@ async def health():
     }
 
 @app.post("/predict", response_model=PredictionResponse)
+@limiter.limit(RATE_LIMIT_PREDICT)
 async def predict(
-    request: PredictionRequest,
+    request: Request,
+    data: PredictionRequest,
     background_tasks: BackgroundTasks,
     api_key: str = Depends(verify_api_key)
 ):
@@ -385,24 +408,24 @@ async def predict(
     """
     if MODEL is None:
         raise HTTPException(status_code=503, detail="Modelo no cargado")
-    
+
     try:
         # Preprocesar texto
-        clean_short = preprocess_text(request.short_description)
-        clean_close = preprocess_text(request.close_notes or "")
+        clean_short = preprocess_text(data.short_description)
+        clean_close = preprocess_text(data.close_notes or "")
         combined_text = clean_short + " " + clean_close
-        
+
         if not combined_text.strip():
             raise HTTPException(status_code=400, detail="Texto vacío después de preprocesamiento")
-        
+
         # Predecir
         prediction = MODEL.predict([combined_text])[0]
-        
+
         # Obtener probabilidades
         if hasattr(MODEL, 'predict_proba'):
             probas = MODEL.predict_proba([combined_text])[0]
             classes = MODEL.classes_ if hasattr(MODEL, 'classes_') else None
-            
+
             if classes is not None:
                 proba_dict = {str(cls): float(prob) for cls, prob in zip(classes, probas)}
                 max_proba = float(np.max(probas))
@@ -412,23 +435,23 @@ async def predict(
         else:
             proba_dict = {prediction: 1.0}
             max_proba = 1.0
-        
+
         response = PredictionResponse(
             prediction=str(prediction),
             probability=max_proba,
             probabilities=proba_dict,
             timestamp=datetime.now().isoformat()
         )
-        
+
         # Log en background
         background_tasks.add_task(
             PREDICTION_LOGGER.log_prediction,
             text=combined_text,
             prediction=str(prediction),
             probability=max_proba,
-            true_label=request.true_label
+            true_label=data.true_label
         )
-        
+
         return response
         
     except Exception as e:
@@ -436,36 +459,38 @@ async def predict(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict/ticket")
+@limiter.limit(RATE_LIMIT_PREDICT)
 async def predict_ticket(
-    request: TicketPredictionRequest,
+    request: Request,
+    data: TicketPredictionRequest,
     background_tasks: BackgroundTasks,
     api_key: str = Depends(verify_api_key)
 ):
     """
     Predice un ticket individual y actualiza automáticamente en la BD.
-    
+
     El ticket_id del JSON debe coincidir con la columna 'number' en la BD.
     """
     if MODEL is None:
         raise HTTPException(status_code=503, detail="Modelo no cargado")
-    
+
     try:
         # Preprocesar texto
-        clean_short = preprocess_text(request.short_description)
-        clean_close = preprocess_text(request.close_notes or "")
+        clean_short = preprocess_text(data.short_description)
+        clean_close = preprocess_text(data.close_notes or "")
         combined_text = clean_short + " " + clean_close
-        
+
         if not combined_text.strip():
             raise HTTPException(status_code=400, detail="Texto vacío después de preprocesamiento")
-        
+
         # Predecir
         prediction = MODEL.predict([combined_text])[0]
-        
+
         # Obtener probabilidades
         if hasattr(MODEL, 'predict_proba'):
             probas = MODEL.predict_proba([combined_text])[0]
             classes = MODEL.classes_ if hasattr(MODEL, 'classes_') else None
-            
+
             if classes is not None:
                 proba_dict = {str(cls): float(prob) for cls, prob in zip(classes, probas)}
                 max_proba = float(np.max(probas))
@@ -475,11 +500,11 @@ async def predict_ticket(
         else:
             proba_dict = {str(prediction): 1.0}
             max_proba = 1.0
-        
+
         # Actualizar en BD (ticket_id se mapea a columna 'number')
-        logger.info(f"Intentando actualizar ticket {request.ticket_id} en base de datos...")
+        logger.info(f"Intentando actualizar ticket {data.ticket_id} en base de datos...")
         update_result = update_ticket_causa(
-            ticket_number=request.ticket_id,  # ticket_id del JSON → columna 'number' en BD
+            ticket_number=data.ticket_id,  # ticket_id del JSON → columna 'number' en BD
             causa=str(prediction),
             confidence=max_proba,
             metadata={
@@ -488,13 +513,13 @@ async def predict_ticket(
                 'model_name': MODEL_METADATA.get('model_name') if MODEL_METADATA else None
             }
         )
-        
+
         # Log del resultado de la actualización
         if update_result.get('success'):
-            logger.info(f"✅ Ticket {request.ticket_id} actualizado exitosamente en BD")
+            logger.info(f"Ticket {data.ticket_id} actualizado exitosamente en BD")
         else:
-            logger.error(f"❌ Error actualizando ticket {request.ticket_id}: {update_result.get('error', 'Error desconocido')}")
-        
+            logger.error(f"Error actualizando ticket {data.ticket_id}: {update_result.get('error', 'Error desconocido')}")
+
         # Log en background
         background_tasks.add_task(
             PREDICTION_LOGGER.log_prediction,
@@ -503,16 +528,16 @@ async def predict_ticket(
             probability=max_proba,
             true_label=None
         )
-        
+
         return {
-            "ticket_id": request.ticket_id,
+            "ticket_id": data.ticket_id,
             "prediction": str(prediction),
             "probability": max_proba,
             "probabilities": proba_dict,
             "database_update": update_result,
             "timestamp": datetime.now().isoformat()
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -520,24 +545,26 @@ async def predict_ticket(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict/tickets/batch")
+@limiter.limit(RATE_LIMIT_BATCH)
 async def predict_tickets_batch(
-    request: BatchTicketPredictionRequest,
+    request: Request,
+    data: BatchTicketPredictionRequest,
     background_tasks: BackgroundTasks,
     api_key: str = Depends(verify_api_key)
 ):
     """
     Predice múltiples tickets en batch y actualiza automáticamente en la BD.
-    
+
     Cada ticket_id del JSON debe coincidir con la columna 'number' en la BD.
     """
     if MODEL is None:
         raise HTTPException(status_code=503, detail="Modelo no cargado")
-    
+
     try:
         results = []
         updates = []
-        
-        for ticket in request.tickets:
+
+        for ticket in data.tickets:
             # Preprocesar texto
             clean_short = preprocess_text(ticket.short_description)
             clean_close = preprocess_text(ticket.close_notes or "")
@@ -630,8 +657,10 @@ async def predict_tickets_batch(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict/batch")
+@limiter.limit(RATE_LIMIT_BATCH)
 async def predict_batch(
-    request: BatchPredictionRequest,
+    request: Request,
+    data: BatchPredictionRequest,
     api_key: str = Depends(verify_api_key)
 ):
     """
@@ -639,11 +668,11 @@ async def predict_batch(
     """
     if MODEL is None:
         raise HTTPException(status_code=503, detail="Modelo no cargado")
-    
+
     try:
         results = []
-        
-        for ticket in request.tickets:
+
+        for ticket in data.tickets:
             clean_short = preprocess_text(ticket.short_description)
             clean_close = preprocess_text(ticket.close_notes or "")
             combined_text = clean_short + " " + clean_close
@@ -688,7 +717,8 @@ async def predict_batch(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/monitoring/drift")
-async def check_drift():
+@limiter.limit(RATE_LIMIT_PREDICT)
+async def check_drift(request: Request):
     """
     Verifica si hay drift en los datos recientes.
     """
@@ -739,7 +769,8 @@ async def check_drift():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/monitoring/metrics")
-async def get_metrics():
+@limiter.limit(RATE_LIMIT_PREDICT)
+async def get_metrics(request: Request):
     """
     Obtiene métricas de monitoreo recientes.
     """
@@ -751,7 +782,8 @@ async def get_metrics():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/monitoring/save-metrics")
-async def save_metrics():
+@limiter.limit(RATE_LIMIT_ADMIN)
+async def save_metrics(request: Request):
     """
     Guarda métricas diarias (llamar periódicamente, ej: cada hora).
     """
@@ -770,7 +802,8 @@ async def save_metrics():
 # ============================================================================
 
 @app.post("/predict/from-db/{ticket_number}")
-async def predict_from_db(ticket_number: str, background_tasks: BackgroundTasks):
+@limiter.limit(RATE_LIMIT_PREDICT)
+async def predict_from_db(request: Request, ticket_number: str, background_tasks: BackgroundTasks):
     """
     Obtiene un ticket de la BD, predice su causa y la actualiza automáticamente.
     """
@@ -851,8 +884,10 @@ async def predict_from_db(ticket_number: str, background_tasks: BackgroundTasks)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict/update-db")
+@limiter.limit(RATE_LIMIT_PREDICT)
 async def predict_and_update_db(
-    request: UpdateDBRequest,
+    request: Request,
+    data: UpdateDBRequest,
     background_tasks: BackgroundTasks
 ):
     """
@@ -863,30 +898,30 @@ async def predict_and_update_db(
     
     try:
         # Preprocesar y predecir
-        clean_short = preprocess_text(request.short_description)
-        clean_close = preprocess_text(request.close_notes or "")
+        clean_short = preprocess_text(data.short_description)
+        clean_close = preprocess_text(data.close_notes or "")
         combined_text = clean_short + " " + clean_close
-        
+
         if not combined_text.strip():
             raise HTTPException(status_code=400, detail="Texto vacío después de preprocesamiento")
-        
+
         # Predecir
         prediction = MODEL.predict([combined_text])[0]
-        
+
         # Obtener probabilidades
         if hasattr(MODEL, 'predict_proba'):
             probas = MODEL.predict_proba([combined_text])[0]
             max_proba = float(np.max(probas))
         else:
             max_proba = 1.0
-        
+
         # Actualizar en BD
         update_result = update_ticket_causa(
-            ticket_number=request.ticket_number,
+            ticket_number=data.ticket_number,
             causa=str(prediction),
             confidence=max_proba
         )
-        
+
         # Log en background
         background_tasks.add_task(
             PREDICTION_LOGGER.log_prediction,
@@ -895,10 +930,10 @@ async def predict_and_update_db(
             probability=max_proba,
             true_label=None
         )
-        
+
         return {
             "success": update_result['success'],
-            "ticket_number": request.ticket_number,
+            "ticket_number": data.ticket_number,
             "prediction": str(prediction),
             "probability": max_proba,
             "database_update": update_result,
@@ -910,7 +945,9 @@ async def predict_and_update_db(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict/process-pending")
+@limiter.limit(RATE_LIMIT_BATCH)
 async def process_pending_tickets(
+    request: Request,
     limit: int = 100,
     background_tasks: BackgroundTasks = None
 ):
@@ -1018,7 +1055,8 @@ async def process_pending_tickets(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/db/health")
-async def db_health():
+@limiter.limit(RATE_LIMIT_HEALTH)
+async def db_health(request: Request):
     """
     Verifica la conexión a la base de datos.
     """
@@ -1059,7 +1097,9 @@ async def db_health():
         }
 
 @app.get("/db/test-update/{ticket_number}")
+@limiter.limit(RATE_LIMIT_ADMIN)
 async def test_db_update(
+    request: Request,
     ticket_number: str,
     api_key: str = Depends(verify_admin_key)
 ):
@@ -1102,7 +1142,9 @@ async def test_db_update(
         }
 
 @app.get("/db/tickets/pending")
+@limiter.limit(RATE_LIMIT_PREDICT)
 async def get_pending_tickets(
+    request: Request,
     limit: int = 100,
     api_key: str = Depends(verify_api_key)
 ):
@@ -1124,7 +1166,8 @@ async def get_pending_tickets(
 # ============================================================================
 
 @app.post("/admin/reload-model")
-async def reload_model(api_key: str = Depends(verify_admin_key)):
+@limiter.limit("2/minute")  # Muy restrictivo - operación pesada
+async def reload_model(request: Request, api_key: str = Depends(verify_admin_key)):
     """
     Recarga el modelo en memoria sin reiniciar la API.
     Requiere ADMIN_API_KEY.
@@ -1194,7 +1237,8 @@ async def reload_model(api_key: str = Depends(verify_admin_key)):
 
 
 @app.get("/admin/model-info")
-async def get_model_info(api_key: str = Depends(verify_admin_key)):
+@limiter.limit(RATE_LIMIT_ADMIN)
+async def get_model_info(request: Request, api_key: str = Depends(verify_admin_key)):
     """Obtiene información del modelo actualmente cargado"""
     return {
         "model_loaded": MODEL is not None,
