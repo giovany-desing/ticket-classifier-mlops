@@ -62,19 +62,20 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 @lru_cache(maxsize=1)
-def load_config(config_path: str = 'config.yaml') -> dict:
+def load_config(config_path: str = 'config.yaml', validate: bool = True) -> dict:
     """
-    Carga configuración desde archivo YAML.
-    Usa cache para evitar lecturas múltiples.
+    Carga y valida configuración desde archivo YAML.
     
     Args:
         config_path: Ruta al archivo de configuración (relativa a la raíz del proyecto)
+        validate: Si True, valida la configuración con Pydantic schemas
         
     Returns:
-        Diccionario con la configuración
+        Diccionario con la configuración validada
         
     Raises:
         FileNotFoundError: Si no se encuentra el archivo de configuración
+        ValidationError: Si la configuración es inválida (cuando validate=True)
     """
     current_dir = Path(__file__).resolve().parent
     project_root = current_dir.parent
@@ -88,10 +89,27 @@ def load_config(config_path: str = 'config.yaml') -> dict:
         )
     
     with open(config_file, 'r', encoding='utf-8') as file:
-        config = yaml.safe_load(file)
+        config_dict = yaml.safe_load(file)
     
-    logger.info(f"✓ Config loaded from: {config_file}")
-    return config
+    # Validar con Pydantic si está habilitado
+    if validate:
+        try:
+            from utils.config_schema import validate_config
+            validated_config = validate_config(config_dict)
+            # Convertir de vuelta a dict para mantener compatibilidad
+            config_dict = validated_config.dict()
+            logger.info(f"✅ Config loaded and validated from: {config_file}")
+        except ImportError:
+            logger.warning("⚠️  config_schema not found, skipping validation")
+            logger.info(f"✓ Config loaded from: {config_file}")
+        except Exception as e:
+            logger.error(f"❌ Configuration validation failed: {e}")
+            logger.error("   Fix config.yaml or set validate=False to skip validation")
+            raise
+    else:
+        logger.info(f"✓ Config loaded from: {config_file} (without validation)")
+    
+    return config_dict
 
 # ============================================================================
 # INICIALIZACIÓN DE RECURSOS GLOBALES

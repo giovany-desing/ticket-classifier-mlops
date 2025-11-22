@@ -90,7 +90,28 @@ monitoring/logs/*.jsonl
 .dvc/tmp/
 
 # ===========================================
+# Airflow
+# ===========================================
+airflow/logs/
+airflow/plugins/__pycache__/
+airflow/*.log
+
+# ===========================================
+# Backups y temporales
+# ===========================================
+*.bak
+*.tmp
+*.temp
+*.swp
+*~.nib
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# ===========================================
 # Archivos de ejemplo (incluir)
 # ===========================================
 !.env.example
 !config.example.yaml
+!**/README.md
+!**/.gitkeep

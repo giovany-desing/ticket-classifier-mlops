@@ -13,9 +13,10 @@ on:
         type: boolean
 
 # Control de concurrencia
+# Evita ejecutar múltiples deploys simultáneos que puedan interferir
 concurrency:
-  group: ci-cd-pipeline-${{ github.ref }}
-  cancel-in-progress: false
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true  # Cancela deploy anterior si hay uno nuevo
 
 env:
   PYTHON_VERSION: '3.9'
